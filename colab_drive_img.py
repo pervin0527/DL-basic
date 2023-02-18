@@ -1,9 +1,7 @@
-url="https://drive.google.com/file/d/141jLWopFztKAOzOEiKwDYBlFwFig4bI9/view?usp=share_link"
+url="https://drive.google.com/file/d/1LdjOv8XIlu8-GTL_n-yySF3B-rPNEBhH/view?usp=share_link"
 path='https://drive.google.com/uc?export=download&id='+url.split('/')[-2]
 size="width=\"\" "+"height =\"\" "
 tag="<img src='"+path+"' "+size+"/><br>"
-# print(" ▶ Path : ", path)
-# print('\n',"▶ Tag : ", tag)
 
 url.split('/')
 path='https://drive.google.com/uc?export=download&id='+url.split('/')[-2]
