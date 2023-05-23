@@ -1,21 +1,16 @@
 import cv2
 import torch
-import numpy as np
-import torchvision.transforms as transforms
+from PIL import Image
 from glob import glob
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 class CustomDataset(Dataset):
-    def __init__(self, path, set_name):
+    def __init__(self, path, set_name, transform):
         self.images = sorted(glob(f"{path}/{set_name}/*/*"))
         self.labels = [file_path.split('/')[-2] for file_path in self.images]
         self.classes = list(set(self.labels))
+        self.transform = transform
         print(f"{set_name} samples : {len(self.images)}")
-
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize((224, 224), antialias=True)
-        ])
 
     def __len__(self):
         return len(self.images)
