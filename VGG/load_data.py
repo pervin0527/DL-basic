@@ -10,7 +10,6 @@ class CustomDataset(Dataset):
         self.labels = [file_path.split('/')[-2] for file_path in self.images]
         self.classes = list(set(self.labels))
         self.transform = transform
-        print(f"{set_name} samples : {len(self.images)}")
 
     def __len__(self):
         return len(self.images)
