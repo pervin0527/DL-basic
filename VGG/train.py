@@ -8,11 +8,54 @@ from vgg import VGG
 from load_data import CustomDataset
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from preprocessing import get_mean_rgb, get_std_rgb, Scale_Jitter
+from preprocessing import get_mean_rgb, get_std_rgb, ScaleJitterTransform
+
+def load_weight_apply(trained_model_name, train_model_name):
+    trained_model = VGG(model_name=trained_model_name, num_classes=len(classes), init_weights=False).to(device)
+    trained_model.load_state_dict(torch.load(load_path))
+    trained_model_layers = dict(trained_model.named_modules())
+
+    train_model = VGG(model_name=train_model_name, num_classes=len(classes), init_weights=True).to(device)
+    train_model_layers = dict(train_model.named_modules())
+
+    layers_to_transfer = {"vgg11" : ["features.0", "features.3", "features.6", "features.8"],
+                          "vgg13" : ["features.0", "features.5", "features.10", "features.12"]}
+    
+    for train_layer_name, trained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[trained_model_name]):
+        train_model_layers[train_layer_name].weight.data.copy_(trained_model_layers[trained_layer_name].weight.data)
+        train_model_layers[train_layer_name].bias.data.copy_(trained_model_layers[trained_layer_name].bias.data)
+
+    print("Pretrained weight is applied \n")
+    return train_model
+
+
+def valid(dataloader, model, loss_fn):
+    model.eval()
+    valid_loss, valid_correct = 0, 0
+    with torch.no_grad():
+        for iter_idx, (X, y) in enumerate(dataloader):
+            X, y = X.to(device), y.to(device)
+            pred = model(X)
+            loss = loss_fn(pred, y).item()
+
+            valid_loss += loss * X.size(0)
+            _, pred = torch.max(pred, 1)
+            _, y = torch.max(y, 1)        
+            valid_correct += (pred == y).sum().item()
+
+    valid_loss /= len(dataloader.dataset)
+    valid_correct /= len(dataloader.dataset)
+    print(f"Valid Loss: {valid_loss:.4f}, Valid Accuracy: {valid_correct:.4f} \n")
+    # scheduler.step(valid_loss)
+
+    return valid_loss
 
 
 def train(dataloader, model, loss_fn, optimizer):
-    current_lr = optimizer.param_groups[0]["lr"]
+    best_loss = 0
+    lr_patience = 10
+    early_stop_patience = 3
+
     for epoch in range(epochs):
         model.train()
         epoch_loss, epoch_correct = 0, 0
@@ -46,35 +89,31 @@ def train(dataloader, model, loss_fn, optimizer):
         print(f"Train Loss: {epoch_loss:.4f}, Train Accuracy: {epoch_correct:.4f}")
 
         valid_loss = valid(valid_dataloader, model, loss_fn)
-        if optimizer.param_groups[0]['lr'] != current_lr:
-            early_stop_patience -=1
-            if early_stop_patience == 0:
-                break
+        if epoch == 0:
+            best_loss = valid_loss
+        else:
+            if valid_loss <= best_loss:
+                best_loss = valid_loss
+                early_stop_patience = 3
+                lr_patience = 10
+            else:
+                lr_patience -= 1
+                print(f"lr patience is decreased : {lr_patience}")
+                print(f"valid loss : {valid_loss:.4f}, min valid_loss : {best_loss:.4f}")
+
+                if lr_patience == 0:
+                    new_lr = learning_rate * 0.1
+                    print("LR changed", optimizer.param_groups[0]["lr"], "to", new_lr)
+                    optimizer.param_groups[0]['lr'] = new_lr
+                    early_stop_patience -= 1
+                    lr_patience = 10
+
+        if early_stop_patience == 0:
+            print("Early stopping patience is 0. Train stopped.")
+            break
 
     torch.save(model.state_dict(), save_path)
     print(f"{model_name} is saved {save_path}")
-
-
-def valid(dataloader, model, loss_fn):
-    model.eval()
-    valid_loss, valid_correct = 0, 0
-    with torch.no_grad():
-        for iter_idx, (X, y) in enumerate(dataloader):
-            X, y = X.to(device), y.to(device)
-            pred = model(X)
-            loss = loss_fn(pred, y).item()
-
-            valid_loss += loss * X.size(0)
-            _, pred = torch.max(pred, 1)
-            _, y = torch.max(y, 1)        
-            valid_correct += (pred == y).sum().item()
-
-    valid_loss /= len(dataloader.dataset)
-    valid_correct /= len(dataloader.dataset)
-    print(f"Valid Loss: {valid_loss:.4f}, Valid Accuracy: {valid_correct:.4f} \n")
-    scheduler.step(valid_loss)
-
-    return valid_loss
 
 
 if __name__ == "__main__":
@@ -82,12 +121,13 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
+    use_pretrained = True
     model_name = "vgg13"
     epochs = 100
     batch_size = 64
-    weight_decay = 0.0005
     learning_rate = 1e-2
-    early_stop_patience = 5
+    weight_decay = 0.0005
+    calc_mean = True
 
     ## Dir
     dataset_path = "/home/pervinco/Datasets/sports_ball"
@@ -95,7 +135,6 @@ if __name__ == "__main__":
     load_path = f"/home/pervinco/Models/VGG/vgg11.pth"
 
     ## Dataset Processing
-    calc_mean = False
     if calc_mean:
         mean_rgb = get_mean_rgb(f"{dataset_path}/train")
         std_rgb = get_std_rgb(f"{dataset_path}/train", mean_rgb)
@@ -103,8 +142,9 @@ if __name__ == "__main__":
         mean_rgb = (0.485, 0.456, 0.406)
         std_rgb = (0.229, 0.224, 0.225)
 
-    print(mean_rgb, std_rgb)
+    print(mean_rgb, std_rgb, "\n")
     train_transform = transforms.Compose([
+        ScaleJitterTransform(),
         transforms.ToTensor(),
         transforms.Resize(size=(224, 224), antialias=False),
         transforms.Normalize(mean=mean_rgb, std=std_rgb),
@@ -118,12 +158,15 @@ if __name__ == "__main__":
 
     ## dataloader : totals / batch size, dataset : total
     print(f"Total train data : {len(train_dataloader.dataset)}, step numbers : {len(train_dataloader)}")
-    print(f"Total test data : {len(valid_dataloader.dataset)}, step numbers : {len(valid_dataloader)}")
+    print(f"Total test data : {len(valid_dataloader.dataset)}, step numbers : {len(valid_dataloader)} \n")
 
     ## build model
     classes = train_dataset.get_classes()
-    model = VGG(model_name=model_name, num_classes=len(classes), init_weights=True).to(device)
-    print(model)
+    if use_pretrained:
+        model = load_weight_apply("vgg11", "vgg13")
+    else:
+        model = VGG(model_name=model_name, num_classes=len(classes), init_weights=True).to(device)
+    print(model, "\n")
 
     # model = models.vgg19(weights=models.VGG19_Weights.DEFAULT).to(device)
     # for param in model.parameters():
@@ -136,17 +179,6 @@ if __name__ == "__main__":
                                 lr=learning_rate, 
                                 momentum=0.9,
                                 weight_decay=0.0005)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
+    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
-    """
-    weight load하고 필요한 layer만 초기화하는 거 만들기.
-    """
-    state_dict = torch.load(load_path)
-    print(state_dict)
-
-    
-    layers = [module for module in model.modules() if not isinstance(module, nn.Sequential)]
-    with torch.no_grad():
-        model.layers[1].weight.copy_(state_dict["features.0.weight"])
-
-    # train(train_dataloader, model, loss_fn, optimizer)
+    train(train_dataloader, model, loss_fn, optimizer)

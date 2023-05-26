@@ -1,8 +1,9 @@
 import cv2
-import torch
 import numpy as np
+import torchvision.transforms as transforms
 from tqdm import tqdm
 from glob import glob
+
 
 def get_mean_rgb(img_path):
     total_pixels = 0
@@ -50,34 +51,37 @@ def get_std_rgb(img_path, mean_rgb):
 
     return std_red, std_green, std_blue
 
-class Scale_Jitter:
-    def __init__(self, min_size=256, max_size=512):
-        self.scale_factor = np.random.uniform(0.5, 2.0)
+class ScaleJitterTransform(object):
+    def __init__(self, min_size=256, max_size=512, crop_size=(224, 224)):
         self.min_size = min_size
         self.max_size = max_size
+        self.crop_size = crop_size
 
     def __call__(self, image):
-        image = image.numpy()
-        ## Rescale the image while keeping the aspect ratio
-        height, width = image.shape[:2]
-        new_height = int(self.scale_factor * height) ## scale_factor 만큼 이미지가 커지거나 작아짐.
-        new_width = int(self.scale_factor * width)
-        if height < width: ## aspect ratio 유지.
-            new_width = int(new_height * (width / height))
-        else:
-            new_height = int(new_width * (height / width))
-        image = cv2.resize(image, (new_width, new_height))
+        return scale_jitter(image, self.min_size, self.max_size, self.crop_size)
 
-        ## Ensure that the resulting image size is within the desired range of 256 to 512 pixels
-        if new_height < 256 or new_width < 256:
-            image = cv2.resize(image, (256, 256))
-        elif new_height > 512 or new_width > 512:
-            image = cv2.resize(image, (512, 512))
+def scale_jitter(image, min_size=256, max_size=512, crop_size=(224, 224)):
+    scale_factor = np.random.uniform(0.5, 2.0)
 
-        ## Randomly crop the image to 224 x 224
-        crop_size = (224, 224)
-        y = np.random.randint(0, image.shape[0] - crop_size[0] + 1) ## 좌상단 x, y 지정.
-        x = np.random.randint(0, image.shape[1] - crop_size[1] + 1)
-        image = image[y:y+crop_size[0], x:x+crop_size[1]] 
+    # Rescale the image while keeping the aspect ratio
+    height, width = image.shape[:2]
+    new_height = int(scale_factor * height)
+    new_width = int(scale_factor * width)
+    if height < width:
+        new_width = int(new_height * (width / height))
+    else:
+        new_height = int(new_width * (height / width))
+    image = cv2.resize(image, (new_width, new_height))
 
-        return torch.tensor(image)
+    # Ensure that the resulting image size is within the desired range
+    if new_height < min_size or new_width < min_size:
+        image = cv2.resize(image, (min_size, min_size))
+    elif new_height > max_size or new_width > max_size:
+        image = cv2.resize(image, (max_size, max_size))
+
+    # Randomly crop the image
+    y = np.random.randint(0, image.shape[0] - crop_size[0] + 1)
+    x = np.random.randint(0, image.shape[1] - crop_size[1] + 1)
+    image = image[y:y+crop_size[0], x:x+crop_size[1]]
+
+    return image
