@@ -85,3 +85,22 @@ def scale_jitter(image, min_size=256, max_size=512, crop_size=(224, 224)):
     image = image[y:y+crop_size[0], x:x+crop_size[1]]
 
     return image
+
+def data_visualize(dataloader, mean_rgb, std_rgb, img_size):
+    reverse_transform = transforms.Compose([
+        transforms.Normalize(mean=[-m/s for m, s in zip(mean_rgb, std_rgb)],
+                             std=[1/s for s in std_rgb]),
+        transforms.Resize(size=img_size, antialias=False),
+    ])
+
+    for batch in dataloader:
+        preprocessed_data = batch[0]
+
+        restored_data = reverse_transform(preprocessed_data) ## (batch_size, 3, 224, 224)
+        for idx, img in enumerate(restored_data):
+            img = np.transpose(img.numpy(), (1, 2, 0))
+            img = img[:, :, ::-1]
+
+            cv2.imshow(str(idx), img)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()

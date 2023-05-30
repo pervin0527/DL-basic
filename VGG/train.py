@@ -7,19 +7,24 @@ from tqdm import tqdm
 from vgg import VGG
 from load_data import CustomDataset
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from preprocessing import get_mean_rgb, get_std_rgb, ScaleJitterTransform
+from torch.utils.tensorboard import SummaryWriter
+from preprocessing import get_mean_rgb, get_std_rgb, ScaleJitterTransform, data_visualize
 
 def load_weight_apply(trained_model_name, train_model_name):
     trained_model = VGG(model_name=trained_model_name, num_classes=len(classes), init_weights=False).to(device)
+    print(f"{trained_model_name} \n {trained_model}")
     trained_model.load_state_dict(torch.load(load_path))
     trained_model_layers = dict(trained_model.named_modules())
 
     train_model = VGG(model_name=train_model_name, num_classes=len(classes), init_weights=True).to(device)
+    print(f"{train_model_name} \n {train_model}")
     train_model_layers = dict(train_model.named_modules())
 
-    layers_to_transfer = {"vgg11" : ["features.0", "features.3", "features.6", "features.8"],
-                          "vgg13" : ["features.0", "features.5", "features.10", "features.12"]}
+    ## Conv2d(3, 64), Conv2d(64, 128), Conv2d(128, 256), Conv2d(256, 256)
+    layers_to_transfer = {"vgg11" : ["features.0", "features.3", "features.6", "features.8", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg13" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg16" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg19" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"]}
     
     for train_layer_name, trained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[trained_model_name]):
         train_model_layers[train_layer_name].weight.data.copy_(trained_model_layers[trained_layer_name].weight.data)
@@ -44,21 +49,21 @@ def valid(dataloader, model, loss_fn):
             valid_correct += (pred == y).sum().item()
 
     valid_loss /= len(dataloader.dataset)
-    valid_correct /= len(dataloader.dataset)
-    print(f"Valid Loss: {valid_loss:.4f}, Valid Accuracy: {valid_correct:.4f} \n")
-    # scheduler.step(valid_loss)
+    valid_accuracy = valid_correct / len(dataloader.dataset)
+    print(f"Valid Loss: {valid_loss:.4f}, Valid Accuracy: {valid_accuracy:.4f} \n")
 
-    return valid_loss
+    return valid_loss, valid_accuracy
 
 
 def train(dataloader, model, loss_fn, optimizer):
     best_loss = 0
     lr_patience = 10
     early_stop_patience = 3
+    writer = SummaryWriter(log_dir=log_path)
 
     for epoch in range(epochs):
         model.train()
-        epoch_loss, epoch_correct = 0, 0
+        train_loss, train_correct = 0, 0
         pbar = tqdm(total=len(dataloader), desc=f'Epoch {epoch + 1} / {epochs}', unit='step')
 
         for iter_idx, (X, y) in enumerate(dataloader):
@@ -77,43 +82,59 @@ def train(dataloader, model, loss_fn, optimizer):
             _, y = torch.max(y, 1)
             correct = (pred == y).sum().item()
 
-            epoch_loss += loss.item() * X.size(0)
-            epoch_correct += correct
+            train_loss += loss.item() * X.size(0)
+            train_correct += correct
 
             pbar.set_postfix({"Loss" : loss.item(), "Acc" : correct / X.size(0)})
             pbar.update(1)
 
         pbar.close()
-        epoch_loss /= len(dataloader.dataset)
-        epoch_correct /= len(dataloader.dataset)
-        print(f"Train Loss: {epoch_loss:.4f}, Train Accuracy: {epoch_correct:.4f}")
+        train_loss /= len(dataloader.dataset)
+        train_accuracy = train_correct / len(dataloader.dataset)
+        print(f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}")
 
-        valid_loss = valid(valid_dataloader, model, loss_fn)
+        ## Validation step
+        valid_loss, valid_accuracy = valid(valid_dataloader, model, loss_fn)
+
+        ## Record train & valid & lr log to tensorboard
+        writer.add_scalar("Loss/Train", train_loss, epoch)
+        writer.add_scalar("Loss/Validation", valid_loss, epoch)
+        writer.add_scalar("Accuracy/Train", train_accuracy, epoch)
+        writer.add_scalar("Accuracy/Validation", valid_accuracy, epoch)
+
+        writer.add_scalars("Loss", {"train_loss" : train_loss, "valid_loss" : valid_loss}, epoch)
+        writer.add_scalars("Accuracy", {"train_accuracy" : train_accuracy, "valid_accuracy" : valid_accuracy}, epoch)
+
+        writer.add_scalar("Learning Rate", optimizer.param_groups[0]["lr"])
+
+
+        ## LR scheduler & Early Stopping
         if epoch == 0:
             best_loss = valid_loss
         else:
             if valid_loss <= best_loss:
+                print(f"Valid loss decreased. The minimum valid loss updated {best_loss:.4f} to {valid_loss:.4f}.")
                 best_loss = valid_loss
-                early_stop_patience = 3
                 lr_patience = 10
             else:
                 lr_patience -= 1
-                print(f"lr patience is decreased : {lr_patience}")
-                print(f"valid loss : {valid_loss:.4f}, min valid_loss : {best_loss:.4f}")
+                print(f"Valid loss did not decrease. patience : {lr_patience} | best : {best_loss:.4f} | current : {valid_loss:.4f}")
 
                 if lr_patience == 0:
-                    new_lr = learning_rate * 0.1
-                    print("LR changed", optimizer.param_groups[0]["lr"], "to", new_lr)
-                    optimizer.param_groups[0]['lr'] = new_lr
-                    early_stop_patience -= 1
                     lr_patience = 10
+                    early_stop_patience -= 1
+                    new_lr = optimizer.param_groups[0]["lr"] * 0.1
 
-        if early_stop_patience == 0:
-            print("Early stopping patience is 0. Train stopped.")
-            break
+                    print(f"Early Stop patience : {early_stop_patience}, learning rate changed {new_lr * 10} to {new_lr}")
+                    optimizer.param_groups[0]['lr'] = new_lr
 
+                if early_stop_patience == 0:
+                    print("Early stopping patience is 0. Train stopped.")
+                    break
+
+    writer.close()
     torch.save(model.state_dict(), save_path)
-    print(f"{model_name} is saved {save_path}")
+    print(f"{train_model}_{dataset_name} is saved {save_path}")
 
 
 if __name__ == "__main__":
@@ -121,18 +142,24 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
+    train_model = "vgg19"
+    pretrain_model = "vgg16"
     use_pretrained = True
-    model_name = "vgg13"
-    epochs = 100
-    batch_size = 64
+
+    epochs = 500
+    batch_size = 128
+    img_size = 224
     learning_rate = 1e-2
     weight_decay = 0.0005
     calc_mean = True
 
     ## Dir
-    dataset_path = "/home/pervinco/Datasets/sports_ball"
-    save_path = f"/home/pervinco/Models/VGG/{model_name}.pth"
-    load_path = f"/home/pervinco/Models/VGG/vgg11.pth"
+    root = "/home/pervinco"
+    dataset_name = "sports"
+    dataset_path = f"{root}/Datasets/{dataset_name}"
+    save_path = f"{root}/Models/VGG/{train_model}_{dataset_name}.pth"
+    load_path = f"{root}/Models/VGG/{pretrain_model}_{dataset_name}.pth"
+    log_path = f"{root}/Models/VGG/{train_model}_{dataset_name}"
 
     ## Dataset Processing
     if calc_mean:
@@ -146,13 +173,13 @@ if __name__ == "__main__":
     train_transform = transforms.Compose([
         ScaleJitterTransform(),
         transforms.ToTensor(),
-        transforms.Resize(size=(224, 224), antialias=False),
+        transforms.Resize(size=(img_size, img_size), antialias=False),
         transforms.Normalize(mean=mean_rgb, std=std_rgb),
     ])
 
     ## Define Dataloader
     train_dataset = CustomDataset(dataset_path, "train", train_transform)
-    valid_dataset = CustomDataset(dataset_path, "test", train_transform)
+    valid_dataset = CustomDataset(dataset_path, "valid", train_transform)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=batch_size)
 
@@ -160,13 +187,16 @@ if __name__ == "__main__":
     print(f"Total train data : {len(train_dataloader.dataset)}, step numbers : {len(train_dataloader)}")
     print(f"Total test data : {len(valid_dataloader.dataset)}, step numbers : {len(valid_dataloader)} \n")
 
+    ## data visualize
+    # data_visualize(train_dataloader, mean_rgb, std_rgb, img_size)
+
     ## build model
     classes = train_dataset.get_classes()
     if use_pretrained:
-        model = load_weight_apply("vgg11", "vgg13")
+        model = load_weight_apply(pretrain_model, train_model)
     else:
-        model = VGG(model_name=model_name, num_classes=len(classes), init_weights=True).to(device)
-    print(model, "\n")
+        model = VGG(model_name=train_model, num_classes=len(classes), init_weights=True).to(device)
+        print(f"{train_model} \n {model}")
 
     # model = models.vgg19(weights=models.VGG19_Weights.DEFAULT).to(device)
     # for param in model.parameters():
