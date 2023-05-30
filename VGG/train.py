@@ -105,7 +105,7 @@ def train(dataloader, model, loss_fn, optimizer):
         writer.add_scalars("Loss", {"train_loss" : train_loss, "valid_loss" : valid_loss}, epoch)
         writer.add_scalars("Accuracy", {"train_accuracy" : train_accuracy, "valid_accuracy" : valid_accuracy}, epoch)
 
-        writer.add_scalar("Learning Rate", optimizer.param_groups[0]["lr"])
+        writer.add_scalar("Learning Rate", optimizer.param_groups[0]["lr"], epoch)
 
 
         ## LR scheduler & Early Stopping
