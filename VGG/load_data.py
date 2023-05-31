@@ -1,6 +1,5 @@
 import cv2
 import torch
-from PIL import Image
 from glob import glob
 from torch.utils.data import Dataset
 

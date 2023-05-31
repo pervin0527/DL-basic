@@ -10,11 +10,52 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from preprocessing import get_mean_rgb, get_std_rgb, ScaleJitterTransform, data_visualize
 
-def load_weight_apply(trained_model_name, train_model_name):
-    trained_model = VGG(model_name=trained_model_name, num_classes=len(classes), init_weights=False).to(device)
-    print(f"{trained_model_name} \n {trained_model}")
-    trained_model.load_state_dict(torch.load(load_path))
-    trained_model_layers = dict(trained_model.named_modules())
+def load_torch_weight(pretrained_model_name, train_model_name):   
+    if train_model_name == "vgg11":
+        pretrained_model = models.vgg11(weights="IMAGENET1K_V1").to(device)
+    elif train_model_name == "vgg13":
+        pretrained_model = models.vgg13(weights="IMAGENET1K_V1").to(device)
+    elif train_model_name == "vgg16":
+        pretrained_model = models.vgg16(weights="IMAGENET1K_V1").to(device)
+    else:
+        pretrained_model = models.vgg19(weights="IMAGENET1K_V1").to(device)
+    
+    pretrained_model.classifier[6] = nn.Linear(pretrained_model.classifier[6].in_features, len(classes)).to(device)
+    
+    for param in pretrained_model.parameters():
+        param.requires_grad = False
+        
+    train_model = VGG(model_name=train_model_name, num_classes=len(classes), init_weights=True).to(device)
+    pretrained_model_layers = dict(pretrained_model.named_modules())
+    train_model_layers = dict(train_model.named_modules())
+
+    ## Conv2d(3, 64), Conv2d(64, 128), Conv2d(128, 256), Conv2d(256, 256)
+    layers_to_transfer = {"vgg11" : ["features.0", "features.3", "features.6", "features.8", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg13" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg16" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"],
+                          "vgg19" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"]}
+    
+    for train_layer_name, pretrained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[pretrained_model_name]):
+        train_model_layers[train_layer_name].weight.data.copy_(pretrained_model_layers[pretrained_layer_name].weight.data)
+        train_model_layers[train_layer_name].bias.data.copy_(pretrained_model_layers[pretrained_layer_name].bias.data)
+
+    check_list = []
+    for train_layer_name, pretrained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[pretrained_model_name]):
+        train_layer_params = train_model_layers[train_layer_name].weight
+        pretrained_layer_params = pretrained_model_layers[pretrained_layer_name].weight
+        check_list.append(torch.allclose(train_layer_params, pretrained_layer_params))
+
+        if all(map(lambda x: x == True, check_list)):
+            print("Torch weight is applied \n")
+    
+        return train_model
+
+
+def load_weight_apply(pretrained_model_name, train_model_name):
+    pretrained_model = VGG(model_name=pretrained_model_name, num_classes=len(classes), init_weights=False).to(device)
+    print(f"{pretrained_model_name} \n {pretrained_model}")
+    pretrained_model.load_state_dict(torch.load(load_path))
+    pretrained_model_layers = dict(pretrained_model.named_modules())
 
     train_model = VGG(model_name=train_model_name, num_classes=len(classes), init_weights=True).to(device)
     print(f"{train_model_name} \n {train_model}")
@@ -26,12 +67,20 @@ def load_weight_apply(trained_model_name, train_model_name):
                           "vgg16" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"],
                           "vgg19" : ["features.0", "features.5", "features.10", "features.12", "classifier.0", "classifier.3", "classifier.6"]}
     
-    for train_layer_name, trained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[trained_model_name]):
-        train_model_layers[train_layer_name].weight.data.copy_(trained_model_layers[trained_layer_name].weight.data)
-        train_model_layers[train_layer_name].bias.data.copy_(trained_model_layers[trained_layer_name].bias.data)
+    for train_layer_name, pretrained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[pretrained_model_name]):
+        train_model_layers[train_layer_name].weight.data.copy_(pretrained_model_layers[pretrained_layer_name].weight.data)
+        train_model_layers[train_layer_name].bias.data.copy_(pretrained_model_layers[pretrained_layer_name].bias.data)
 
-    print("Pretrained weight is applied \n")
-    return train_model
+    check_list = []
+    for train_layer_name, pretrained_layer_name in zip(layers_to_transfer[train_model_name], layers_to_transfer[pretrained_model_name]):
+        train_layer_params = train_model_layers[train_layer_name].weight
+        pretrained_layer_params = pretrained_model_layers[pretrained_layer_name].weight
+        check_list.append(torch.allclose(train_layer_params, pretrained_layer_params))
+
+        if all(map(lambda x: x == True, check_list)):
+            print("Pretrained weight is applied \n")
+    
+        return train_model
 
 
 def valid(dataloader, model, loss_fn):
@@ -56,9 +105,8 @@ def valid(dataloader, model, loss_fn):
 
 
 def train(dataloader, model, loss_fn, optimizer):
+    global lr_patience, early_stop_patience
     best_loss = 0
-    lr_patience = 10
-    early_stop_patience = 3
     writer = SummaryWriter(log_dir=log_path)
 
     for epoch in range(epochs):
@@ -143,15 +191,19 @@ if __name__ == "__main__":
 
     ## Hyper-parameters
     train_model = "vgg19"
-    pretrain_model = "vgg16"
-    use_pretrained = True
+    pretrain_model = "vgg19"
+    use_pretrained = False
+    use_torch_weight = True
 
-    epochs = 500
+    epochs = 1000
     batch_size = 128
     img_size = 224
     learning_rate = 1e-2
     weight_decay = 0.0005
     calc_mean = True
+
+    lr_patience = 10
+    early_stop_patience = 7
 
     ## Dir
     root = "/home/pervinco"
@@ -160,6 +212,7 @@ if __name__ == "__main__":
     save_path = f"{root}/Models/VGG/{train_model}_{dataset_name}.pth"
     load_path = f"{root}/Models/VGG/{pretrain_model}_{dataset_name}.pth"
     log_path = f"{root}/Models/VGG/{train_model}_{dataset_name}"
+    torch_weight_path = f"{root}/Models/VGG/torch_weight"
 
     ## Dataset Processing
     if calc_mean:
@@ -174,6 +227,8 @@ if __name__ == "__main__":
         ScaleJitterTransform(),
         transforms.ToTensor(),
         transforms.Resize(size=(img_size, img_size), antialias=False),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0, contrast=0, saturation=0, hue=(-0.5, 0.5)),
         transforms.Normalize(mean=mean_rgb, std=std_rgb),
     ])
 
@@ -192,16 +247,13 @@ if __name__ == "__main__":
 
     ## build model
     classes = train_dataset.get_classes()
-    if use_pretrained:
+    if use_pretrained and not use_torch_weight:
         model = load_weight_apply(pretrain_model, train_model)
+    elif use_torch_weight and not use_pretrained:
+        model = load_torch_weight(train_model, pretrain_model)
     else:
         model = VGG(model_name=train_model, num_classes=len(classes), init_weights=True).to(device)
         print(f"{train_model} \n {model}")
-
-    # model = models.vgg19(weights=models.VGG19_Weights.DEFAULT).to(device)
-    # for param in model.parameters():
-    #     param.requires_grad = True
-    # model.classifier[6] = nn.Linear(model.classifier[6].in_features, len(classes)).to(device)
 
     ## Loss func & Optimizer
     loss_fn = nn.CrossEntropyLoss()

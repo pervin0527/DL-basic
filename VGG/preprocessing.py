@@ -3,6 +3,7 @@ import numpy as np
 import torchvision.transforms as transforms
 from tqdm import tqdm
 from glob import glob
+from random import random
 
 
 def get_mean_rgb(img_path):
@@ -52,13 +53,17 @@ def get_std_rgb(img_path, mean_rgb):
     return std_red, std_green, std_blue
 
 class ScaleJitterTransform(object):
-    def __init__(self, min_size=256, max_size=512, crop_size=(224, 224)):
+    def __init__(self, min_size=256, max_size=512, crop_size=(224, 224), p=0.5):
         self.min_size = min_size
         self.max_size = max_size
         self.crop_size = crop_size
+        self.p = p
 
     def __call__(self, image):
-        return scale_jitter(image, self.min_size, self.max_size, self.crop_size)
+        if self.p < random():
+            return scale_jitter(image, self.min_size, self.max_size, self.crop_size)
+        else:
+            return image
 
 def scale_jitter(image, min_size=256, max_size=512, crop_size=(224, 224)):
     scale_factor = np.random.uniform(0.5, 2.0)
