@@ -190,8 +190,8 @@ if __name__ == "__main__":
     print(f"Using {device}")
 
     ## Hyper-parameters
-    train_model = "vgg19"
-    pretrain_model = "vgg19"
+    train_model = "vgg11"
+    pretrain_model = "vgg11"
     use_pretrained = False
     use_torch_weight = True
 
@@ -203,7 +203,7 @@ if __name__ == "__main__":
     calc_mean = True
 
     lr_patience = 10
-    early_stop_patience = 7
+    early_stop_patience = 5
 
     ## Dir
     root = "/home/pervinco"
@@ -212,7 +212,6 @@ if __name__ == "__main__":
     save_path = f"{root}/Models/VGG/{train_model}_{dataset_name}.pth"
     load_path = f"{root}/Models/VGG/{pretrain_model}_{dataset_name}.pth"
     log_path = f"{root}/Models/VGG/{train_model}_{dataset_name}"
-    torch_weight_path = f"{root}/Models/VGG/torch_weight"
 
     ## Dataset Processing
     if calc_mean:
