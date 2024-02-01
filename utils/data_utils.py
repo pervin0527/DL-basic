@@ -1,11 +1,14 @@
 import os
 import wget
+import gzip
 import pickle
+import struct
 import tarfile
 import numpy as np
+import urllib.request
 
 
-def download_and_extract(path):
+def download_cifar10(path):
     url = 'https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz'
     file_name = os.path.join(path, url.split('/')[-1])
 
@@ -26,7 +29,7 @@ def download_and_extract(path):
         print("압축 해제 과정을 건너뜁니다.")
 
 
-def get_dataset(data_dir):
+def get_cifar10(data_dir):
     train_data_files = ["data_batch_1",
                         "data_batch_2",
                         "data_batch_3",
@@ -77,5 +80,66 @@ def cat_filter(labels, target=3):
     return np.array(Y).transpose((1, 0))
 
 
-if __name__ == "__main__":
-    download_and_extract("/home/pervinco/Datasets/test")
+def download_and_extract_mnist_data(download_path):
+    # 이미 다운로드된 경우 스킵
+    if os.path.exists(os.path.join(download_path, 'train-images-idx3-ubyte')) and \
+       os.path.exists(os.path.join(download_path, 'train-labels-idx1-ubyte')) and \
+       os.path.exists(os.path.join(download_path, 't10k-images-idx3-ubyte')) and \
+       os.path.exists(os.path.join(download_path, 't10k-labels-idx1-ubyte')):
+        print("MNIST data is already downloaded and extracted.")
+        train_x = read_mnist_images(os.path.join(download_path, 'train-images-idx3-ubyte'))
+        train_y = read_mnist_labels(os.path.join(download_path, 'train-labels-idx1-ubyte'))
+        test_x = read_mnist_images(os.path.join(download_path, 't10k-images-idx3-ubyte'))
+        test_y = read_mnist_labels(os.path.join(download_path, 't10k-labels-idx1-ubyte'))
+        
+        return train_x, train_y, test_x, test_y
+
+    # MNIST 데이터 다운로드 경로
+    mnist_urls = [
+        "http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz",
+        "http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz",
+        "http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz",
+        "http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz"
+    ]
+    
+    # 다운로드 디렉토리 생성
+    if not os.path.exists(download_path):
+        os.makedirs(download_path)
+    
+    # 각 파일 다운로드 및 압축 해제
+    for url in mnist_urls:
+        file_name = url.split("/")[-1]
+        file_path = os.path.join(download_path, file_name)
+        if not os.path.exists(file_path):
+            print(f"Downloading {file_name}...")
+            urllib.request.urlretrieve(url, file_path)
+        
+        # 압축 해제
+        with gzip.open(file_path, 'rb') as f_in:
+            with open(file_path[:-3], 'wb') as f_out:
+                f_out.write(f_in.read())
+        os.remove(file_path)
+        print(f"Extracted {file_name}")
+    
+    # 데이터 읽기
+    train_x = read_mnist_images(os.path.join(download_path, 'train-images-idx3-ubyte'))
+    train_y = read_mnist_labels(os.path.join(download_path, 'train-labels-idx1-ubyte'))
+    test_x = read_mnist_images(os.path.join(download_path, 't10k-images-idx3-ubyte'))
+    test_y = read_mnist_labels(os.path.join(download_path, 't10k-labels-idx1-ubyte'))
+    
+    return train_x, train_y, test_x, test_y
+    
+def read_mnist_images(file_path):
+    with open(file_path, 'rb') as f:
+        magic, num_images, num_rows, num_cols = struct.unpack(">IIII", f.read(16))
+        assert magic == 2051, "Not a valid MNIST image file"
+        data = np.fromfile(f, dtype=np.uint8)
+        data = data.reshape(num_images, num_rows, num_cols)
+    return data
+
+def read_mnist_labels(file_path):
+    with open(file_path, 'rb') as f:
+        magic, num_labels = struct.unpack(">II", f.read(8))
+        assert magic == 2049, "Not a valid MNIST label file"
+        labels = np.fromfile(f, dtype=np.uint8)
+    return labels
