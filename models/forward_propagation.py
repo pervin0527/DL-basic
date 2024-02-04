@@ -50,6 +50,18 @@ def initialize_parameters_zeros(layers_dims):
     return parameters
 
 
+def initialize_parameters_xavier(layers_dims):
+    np.random.seed(3)
+    parameters = {}
+    L = len(layers_dims) - 1
+    
+    for l in range(1, L + 1):
+        parameters['W' + str(l)] = np.random.randn(layers_dims[l], layers_dims[l-1]) * np.sqrt(1 / layers_dims[l-1])
+        parameters['b' + str(l)] = np.zeros((layers_dims[l], 1))
+                
+    return parameters
+
+
 def initialize_parameters_he(layers_dims):  
     ## He Normal Distribution을 따라 확률 변수들에 확률을 부여하고, 랜덤으로 가중치 값을 선정.
     np.random.seed(3)
