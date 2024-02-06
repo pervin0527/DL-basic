@@ -105,6 +105,7 @@ def model_regularization(X, Y, learning_rate=0.3, num_iterations=30000, print_co
     
     return parameters
 
+
 def random_mini_batches(X, Y, mini_batch_size=64, seed=0):
     np.random.seed(seed)
     m = X.shape[1]
@@ -132,6 +133,7 @@ def random_mini_batches(X, Y, mini_batch_size=64, seed=0):
         mini_batches.append(mini_batch)
 
     return mini_batches
+
 
 def model_SGD(X, Y, layers_dims, learning_rate=0.01, batch_size=64, num_epochs=5000, print_cost=True):
     """

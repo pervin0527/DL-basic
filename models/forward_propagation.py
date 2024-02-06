@@ -11,6 +11,17 @@ def softmax(z):
     return e_z / e_z.sum(axis=0, keepdims=True)
 
 
+def normalize_data(X):
+    """
+    Z-Score Normalization Z = (X - mean) / std
+    """
+    mean = np.mean(X, axis=1, keepdims=True)
+    std = np.std(X, axis=1, keepdims=True)
+    X_normalized = (X - mean) / std
+
+    return X_normalized
+
+
 def initialize_parameters_random(layers_dims):
     """
     Normal Distribution을 기반으로 랜덤값을 선정.
@@ -123,8 +134,12 @@ def compute_cost(AL, Y):
     """
     m = Y.shape[1]
 
-    cost = (-1/m) * np.sum(Y * np.log(AL) + (1- Y) * np.log(1 - AL))
-    cost = np.squeeze(cost)
+    # logprobs = np.multiply(np.log(AL), Y) + np.multiply((1 - Y), np.log(1 - AL))
+    logprobs = np.multiply(np.log(AL + 1e-10), Y) + np.multiply((1 - Y), np.log(1 - AL + 1e-10))
+
+    cost = -np.sum(logprobs) / m
+
+    cost = float(np.squeeze(cost))
 
     return cost
 

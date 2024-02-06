@@ -2,6 +2,9 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
 def initialize_parameters_he(layers_dims):  
     ## He Normal Distribution을 따라 확률 변수들에 확률을 부여하고, 랜덤으로 가중치 값을 선정.
     np.random.seed(3)

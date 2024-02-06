@@ -1,14 +1,14 @@
 import numpy as np
 
-def relu_backward(dA, Z):
-    dZ = np.array(dA, copy=True)
-    dZ[Z <= 0] = 0
-
-    return dZ
-
 def sigmoid_backward(dA, Z):
     S = 1 / (1 + np.exp(-Z))
     dZ = dA * S * (1-S)
+
+    return dZ
+
+def relu_backward(dA, Z):
+    dZ = np.array(dA, copy=True)
+    dZ[Z <= 0] = 0
 
     return dZ
 
@@ -34,7 +34,8 @@ def backward_propagation(X, Y, caches, AL):
     m = X.shape[1] ## 데이터 샘플의 수
 
     ## cost function gradient
-    dAL = -(np.divide(Y, AL) - np.divide(1-Y, 1-AL))
+    # dAL = -(np.divide(Y, AL) - np.divide(1-Y, 1-AL))
+    dAL = -(np.divide(Y, AL + 1e-10) - np.divide(1 - Y, 1 - AL + 1e-10))
 
     ## L번째 layer(출력층) [sigmoid -> Linear] gradient
     cache = caches[-1]
@@ -62,6 +63,7 @@ def backward_propagation(X, Y, caches, AL):
     
     return grads
 
+
 def update_parameters_with_gradient_descent(parameters, grads, learning_rate):
     """
     Gradient Descent 방식으로 parameter를 업데이트.
@@ -81,6 +83,7 @@ def update_parameters_with_gradient_descent(parameters, grads, learning_rate):
         parameters["b" + str(l)] = parameters["b" + str(l)] - learning_rate * grads['db' + str(l)]
 
     return parameters
+
 
 def backward_propagation_with_regularization(X, Y, cache, lambd):
     """
@@ -118,6 +121,7 @@ def backward_propagation_with_regularization(X, Y, cache, lambd):
                  "dZ1": dZ1, "dW1": dW1, "db1": db1}
     
     return gradients
+
 
 def backward_propagation_with_dropout(X, Y, cache, keep_prob):
     """
