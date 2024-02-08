@@ -40,3 +40,7 @@
 ### 6.BatchNormalization
  - [Post](https://www.notion.so/pervin0527/Batch-Normalization-155285bf5a7545e490dcf45b3c40a5ac?pvs=4)
  - [Code](./07-BatchNormalization.ipynb)
+
+### 7.VGG Net - Very Deep Convolutional Neural Network
+ - [Post](https://www.notion.so/pervin0527/VGGNet-Very-Deep-Convolutional-networks-for-Large-Scale-image-recognition-8e88e520424248b4bc6cba2aad72246b)
+ - [Code](./08-VGG.ipynb)
