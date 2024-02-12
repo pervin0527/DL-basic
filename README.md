@@ -48,3 +48,7 @@
 ### 8.ResNet - Residual Learning for Image Recongnition
  - [Post](https://pervin0527.notion.site/ResNet-Deep-Residual-Learning-for-Image-Recognition-fc83704e70254d3499acb285efbe582b?pvs=4)
  - [Code](./09-Deep%20Residual%20Learning%20for%20Image%20Recognition.ipynb)
+
+### 9.MobileNet - Efficient Convolutional Neural Networks for Mobile Vision Applications
+ - [Post](https://pervin0527.notion.site/MobileNet-Efficient-Convolutional-Neural-Networks-for-Mobile-Vision-Applications-e119194461844079ad5b08732d1d2fe7?pvs=4)
+ - [Code](./10-Efficient%20Convolutional%20Neural%20Networks%20for%20Mobile%20Vision%20Applications.ipynb)
