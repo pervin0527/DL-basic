@@ -52,3 +52,7 @@
 ### 9.MobileNet - Efficient Convolutional Neural Networks for Mobile Vision Applications
  - [Post](https://pervin0527.notion.site/MobileNet-Efficient-Convolutional-Neural-Networks-for-Mobile-Vision-Applications-e119194461844079ad5b08732d1d2fe7?pvs=4)
  - [Code](./10-Efficient%20Convolutional%20Neural%20Networks%20for%20Mobile%20Vision%20Applications.ipynb)
+
+### 10.MobileNetV2 - Inverted Residuals and Linear Bottlenecks
+ - [Post](https://pervin0527.notion.site/MobileNetV2-Inverted-Residuals-and-Linear-Bottlenecks-40da4063ea724dafb12d3554c55d9f2f?pvs=4)
+ - [Code](./11-Inverted%20Residuals%20and%20Linear%20Bottlenecks.ipynb)
