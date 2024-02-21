@@ -77,3 +77,18 @@
 
 - [Post](https://www.notion.so/pervin0527/Recurrent-Neural-Network-c49bc8cede584d6a8427ac6d8fca81ba?pvs=4)
 - [Code](./13-Seqeunce%20Data.ipynb)
+
+### 14. Seq2Seq & Attention
+
+- [Post](https://pervin0527.notion.site/Seq2Seq-Attention-Mechanism-c7977b5135bc4c81bf3299a8857af9a1?pvs=4)
+- [Code](./14-Seq2Seq,%20Attention.ipynb)
+
+## 15.Transformer - Attention is all you need.
+
+- [Post](https://pervin0527.notion.site/Transformer-Attention-is-all-you-need-7cc4a9eb95714166acb1ce9ac1fd8c4e?pvs=4)
+- [Code](./15-Attention%20is%20all%20you%20need.ipynb)
+
+## 16. Vision Transformer - AN IMAGE IS WORTH 16X16 WORDS: TRANSFORMERS FOR IMAGE RECOGNITION AT SCALE
+
+- [Post](https://pervin0527.notion.site/ViT-AN-IMAGE-IS-WORTH-16X16-WORDS-TRANSFORMERS-FOR-IMAGE-RECOGNITION-AT-SCALE-d7890b5b08774289bb73740c1041f59c?pvs=4)
+- [Code](./16-[ViT]AN%20IMAGE%20IS%20WORTH%2016X16%20WORDS:%20TRANSFORMERS%20FOR%20IMAGE%20RECOGNITION%20AT%20SCALE.ipynb)
