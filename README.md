@@ -83,32 +83,32 @@
 - [Post](https://pervin0527.notion.site/Seq2Seq-Attention-Mechanism-c7977b5135bc4c81bf3299a8857af9a1?pvs=4)
 - [Code](./14-Seq2Seq,%20Attention.ipynb)
 
-## 15.[Transformer]Attention is all you need.
+### 15.[Transformer]Attention is all you need.
 
 - [Post](https://pervin0527.notion.site/Transformer-Attention-is-all-you-need-7cc4a9eb95714166acb1ce9ac1fd8c4e?pvs=4)
 - [Code](./15-Attention%20is%20all%20you%20need.ipynb)
 
-## 16.[Vision Transformer]AN IMAGE IS WORTH 16X16 WORDS: TRANSFORMERS FOR IMAGE RECOGNITION AT SCALE
+### 16.[Vision Transformer]AN IMAGE IS WORTH 16X16 WORDS: TRANSFORMERS FOR IMAGE RECOGNITION AT SCALE
 
 - [Post](https://pervin0527.notion.site/ViT-AN-IMAGE-IS-WORTH-16X16-WORDS-TRANSFORMERS-FOR-IMAGE-RECOGNITION-AT-SCALE-d7890b5b08774289bb73740c1041f59c?pvs=4)
 - [Code](./16-[ViT]AN%20IMAGE%20IS%20WORTH%2016X16%20WORDS:%20TRANSFORMERS%20FOR%20IMAGE%20RECOGNITION%20AT%20SCALE.ipynb)
 
-## 17.[DETR]End-to-End Object Detection with Transformers
+### 17.[DETR]End-to-End Object Detection with Transformers
 
 - [Post](https://pervin0527.notion.site/DETR-End-to-End-Object-Detection-with-Transformers-b50a8f0060a24fcfb180268147f5dee9?pvs=4)
 - [Code](./17-[DETR]End-to-End%20Object%20Detection%20with%20Transformers.ipynb)
 
-## 18.[GAN]Generative Adversarial Networks
+### 18.[GAN]Generative Adversarial Networks
 
 - [Post](https://pervin0527.notion.site/Generative-Adversarial-Networks-044ca72cbdcd4400a7e744c96ccf7fe2?pvs=4)
 - [Code](./18-Generative%20Adversarial%20Networks.ipynb)
 
-## 19.[DCGAN]UNSUPERVISED REPRESENTATION LEARNING WITH DEEP CONVOLUTIONAL GENERATIVE ADVERSARIAL NETWORKS
+### 19.[DCGAN]UNSUPERVISED REPRESENTATION LEARNING WITH DEEP CONVOLUTIONAL GENERATIVE ADVERSARIAL NETWORKS
 
 - [Post](https://pervin0527.notion.site/DCGAN-UNSUPERVISED-REPRESENTATION-LEARNING-WITH-DEEP-CONVOLUTIONAL-GENERATIVE-ADVERSARIAL-NETWORKS-a208b2e8c9604d918b241f0d3d8cca8e?pvs=4)
 - [Code](./19-[DCGAN]%20UNSUPERVISED%20REPRESENTATION%20LEARNING%20WITH%20DEEP%20CONVOLUTIONAL%20GENERATIVE%20ADVERSARIAL%20NETWORKS.ipynb)
 
-## 20.[cGAN]Conditional Generative Adversarial Nets
+### 20.[cGAN]Conditional Generative Adversarial Nets
 
 - [Post](https://pervin0527.notion.site/cGAN-Conditional-Generative-Adversarial-Nets-9f8101207fb24d65bcd17156b5c63a5c?pvs=4)
 - [Code](./20-[CGAN]Conditional%20Generative%20Adversarial%20Nets.ipynb)
