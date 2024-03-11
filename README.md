@@ -112,3 +112,8 @@
 
 - [Post](https://pervin0527.notion.site/cGAN-Conditional-Generative-Adversarial-Nets-9f8101207fb24d65bcd17156b5c63a5c?pvs=4)
 - [Code](./20-[CGAN]Conditional%20Generative%20Adversarial%20Nets.ipynb)
+
+### 21.[WGAN]Wasserstein GAN
+
+- [Posrt](https://pervin0527.notion.site/WGAN-Wasserstein-GAN-66d430a3fe444f71a59d89c701cc0720?pvs=4)
+- [Code](./21-[WGAN-CP]Wasserstein%20GAN.ipynb)
