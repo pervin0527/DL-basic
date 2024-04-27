@@ -2,9 +2,10 @@ from distutils.command import build
 import spacy
 import datasets
 
+from torch.nn.utils.rnn import pad_sequence
 from torchtext.vocab import build_vocab_from_iterator
 
-class CustomDataset:
+class Multi30kDataset:
     def __init__(self, max_length, min_freq=1, lower=True):
         self.sos_token = '<sos>'
         self.eos_token = '<eos>'
@@ -20,23 +21,7 @@ class CustomDataset:
         dataset = datasets.load_dataset("bentrevett/multi30k")
         
         ## {'en': 'Two young, White males are outside near many bushes.', 'de': 'Zwei junge weiße Männer sind im Freien in der Nähe vieler Büsche.'}
-        train_data, valid_data, test_data = (dataset["train"], dataset["validation"], dataset["test"])
-
-        ## Tokenizer & Tokenize
-        self.en_tokenizer = spacy.load("en_core_web_sm")
-        self.de_tokenizer = spacy.load("de_core_news_sm")
-        self.train_data, self.valid_data, self.test_data = self.tokenize(train_data, valid_data, test_data)
-
-        ## build Vocab
-        self.en_vocab, self.de_vocab = self.build_vocabs()
-        assert self.en_vocab[self.unk_token] == self.de_vocab[self.unk_token]
-        assert self.en_vocab[self.pad_token] == self.de_vocab[self.pad_token]
-
-        unk_index = self.en_vocab[self.unk_token]
-        pad_index = self.en_vocab[self.pad_token]
-
-        self.en_vocab.set_default_index(unk_index)
-        self.de_vocab.set_default_index(unk_index)
+        self.train_data, self.valid_data, self.test_data = (dataset["train"], dataset["validation"], dataset["test"])
 
 
 
@@ -84,3 +69,55 @@ class CustomDataset:
         de_vocab = build_vocab_from_iterator(self.train_data["de_tokens"], min_freq=self.min_freq, specials=self.special_tokens)
 
         return en_vocab, de_vocab
+    
+
+    def word_to_index(self, example, en_vocab, de_vocab):
+        en_ids = en_vocab.lookup_indices(example["en_tokens"])
+        de_ids = de_vocab.lookup_indices(example["de_tokens"])
+        
+        return {"en_ids": en_ids, "de_ids": de_ids}
+    
+
+    def get_datasets(self):
+        ## Tokenizer & Tokenize
+        self.en_tokenizer = spacy.load("en_core_web_sm")
+        self.de_tokenizer = spacy.load("de_core_news_sm")
+        self.train_data, self.valid_data, self.test_data = self.tokenize(self.train_data, self.valid_data, self.test_data)
+
+        ## build Vocab Dictionary
+        self.en_vocab, self.de_vocab = self.build_vocabs()
+        assert self.en_vocab[self.unk_token] == self.de_vocab[self.unk_token]
+        assert self.en_vocab[self.pad_token] == self.de_vocab[self.pad_token]
+
+        unk_index = self.en_vocab[self.unk_token]
+        pad_index = self.en_vocab[self.pad_token]
+
+        self.en_vocab.set_default_index(unk_index)
+        self.de_vocab.set_default_index(unk_index)
+
+        ## word to idx
+        self.train_data = self.train_data.map(self.word_to_index, fn_kwargs={'en_vocab' : self.en_vocab, 'de_vocab' : self.de_vocab})
+        self.valid_data = self.valid_data.map(self.word_to_index, fn_kwargs={'en_vocab' : self.en_vocab, 'de_vocab' : self.de_vocab})
+        self.test_data = self.test_data.map(self.word_to_index, fn_kwargs={'en_vocab' : self.en_vocab, 'de_vocab' : self.de_vocab})
+
+        ## idx to tensor
+        self.train_data = self.train_data.with_format(type='torch', columns=["en_ids", "de_ids"], output_all_columns=True)
+        self.valid_data = self.valid_data.with_format(type='torch', columns=["en_ids", "de_ids"], output_all_columns=True)
+        self.test_data = self.test_data.with_format(type='torch', columns=["en_ids", "de_ids"], output_all_columns=True)
+
+        return self.train_data, self.valid_data, self.test_data
+    
+
+    def get_collate_fn(pad_index):
+        def collate_fn(batch):
+            batch_en_ids = [data["en_ids"] for data in batch]
+            batch_de_ids = [data["de_ids"] for data in batch]
+            batch_en_ids = pad_sequence(batch_en_ids, padding_value=pad_index)
+            batch_de_ids = pad_sequence(batch_de_ids, padding_value=pad_index)
+            batch = {
+                "en_ids": batch_en_ids,
+                "de_ids": batch_de_ids,
+            }
+            return batch
+
+        return collate_fn
