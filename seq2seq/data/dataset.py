@@ -23,6 +23,21 @@ class Multi30kDataset:
         ## {'en': 'Two young, White males are outside near many bushes.', 'de': 'Zwei junge weiße Männer sind im Freien in der Nähe vieler Büsche.'}
         self.train_data, self.valid_data, self.test_data = (dataset["train"], dataset["validation"], dataset["test"])
 
+        ## Tokenizer & Tokenize
+        self.en_tokenizer = spacy.load("en_core_web_sm")
+        self.de_tokenizer = spacy.load("de_core_news_sm")
+        self.train_data, self.valid_data, self.test_data = self.tokenize(self.train_data, self.valid_data, self.test_data)
+
+        ## build Vocab Dictionary
+        self.en_vocab, self.de_vocab = self.build_vocabs()
+        assert self.en_vocab[self.unk_token] == self.de_vocab[self.unk_token]
+        assert self.en_vocab[self.pad_token] == self.de_vocab[self.pad_token]
+
+        self.unk_index = self.en_vocab[self.unk_token]
+        self.pad_index = self.en_vocab[self.pad_token]
+
+        self.en_vocab.set_default_index(self.unk_index)
+        self.de_vocab.set_default_index(self.unk_index)
 
 
     def tokenize_process(self, example, src_tokenizer, trg_tokenizer, max_length, lower, sos_token, eos_token):
@@ -79,22 +94,6 @@ class Multi30kDataset:
     
 
     def get_datasets(self):
-        ## Tokenizer & Tokenize
-        self.en_tokenizer = spacy.load("en_core_web_sm")
-        self.de_tokenizer = spacy.load("de_core_news_sm")
-        self.train_data, self.valid_data, self.test_data = self.tokenize(self.train_data, self.valid_data, self.test_data)
-
-        ## build Vocab Dictionary
-        self.en_vocab, self.de_vocab = self.build_vocabs()
-        assert self.en_vocab[self.unk_token] == self.de_vocab[self.unk_token]
-        assert self.en_vocab[self.pad_token] == self.de_vocab[self.pad_token]
-
-        unk_index = self.en_vocab[self.unk_token]
-        pad_index = self.en_vocab[self.pad_token]
-
-        self.en_vocab.set_default_index(unk_index)
-        self.de_vocab.set_default_index(unk_index)
-
         ## word to idx
         self.train_data = self.train_data.map(self.word_to_index, fn_kwargs={'en_vocab' : self.en_vocab, 'de_vocab' : self.de_vocab})
         self.valid_data = self.valid_data.map(self.word_to_index, fn_kwargs={'en_vocab' : self.en_vocab, 'de_vocab' : self.de_vocab})
@@ -108,7 +107,7 @@ class Multi30kDataset:
         return self.train_data, self.valid_data, self.test_data
     
 
-    def get_collate_fn(pad_index):
+    def get_collate_fn(self, pad_index):
         def collate_fn(batch):
             batch_en_ids = [data["en_ids"] for data in batch]
             batch_de_ids = [data["de_ids"] for data in batch]
