@@ -19,7 +19,7 @@ class Decoder(nn.Module):
         hidden : [num_layers * n_directions, batch_size, hidden_dim]
         cell : [num_layers * n_directions, batch_size, hidden_dim]
         """
-        input = input.unsqueeze(0) ## [1, batch_size]
+        input = input.unsqueeze(0) ## [1, batch_size] == [sequence_length, batch_size]
         embedded = self.dropout(self.embedding(input)) ## [1, batch_size, embedding_dim]
 
         """
