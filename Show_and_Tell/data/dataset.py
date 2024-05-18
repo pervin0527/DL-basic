@@ -1,83 +1,58 @@
 import os
-import cv2
+import nltk
 import torch
-import spacy
 
-from tqdm import tqdm
 from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
-from torchtext.vocab import build_vocab_from_iterator
+
 
 class CocoDataset(Dataset):
-    def __init__(self, data_dir, ds_type='train', transform=None, vocab=None, vocab_file='vocab.pth'):
-        self.data_dir = data_dir
-        self.ds_type = ds_type
-        self.coco = COCO(f'{self.data_dir}/annotations/captions_{ds_type}2017.json')
-        self.ids = list(self.coco.anns.keys())
+    def __init__(self, root, json, vocab, transform=None):
+        self.root = root
+        self.coco = COCO(json)
+        self.ids = list(self.coco.anns.keys()) ## 전체 파일 리스트
+        self.vocab = vocab
         self.transform = transform
-
-        self.tokenizer = spacy.load('en_core_web_sm', disable=['ner', 'parser', 'textcat'])
-
-        # 단어사전 로드 또는 생성
-        if vocab is None:
-            if os.path.exists(f'{self.data_dir}/{vocab_file}'):
-                self.vocab = self.load_vocab(f'{self.data_dir}/{vocab_file}')
-            else:
-                self.vocab = self.build_vocab()
-                self.save_vocab(self.vocab, f'{self.data_dir}/{vocab_file}')
-        else:
-            self.vocab = vocab
-
-    def tokenize_caption(self, caption):
-        doc = self.tokenizer(caption.lower())
-        return [token.text for token in doc if not token.is_punct]
-
-    def build_vocab(self):
-        def yield_tokens(captions):
-            for caption in tqdm(captions, desc="Building Vocab"):
-                yield self.tokenize_caption(caption)
-    
-        captions = (self.coco.anns[ann_id]['caption'] for ann_id in self.ids)
-        vocab = build_vocab_from_iterator(yield_tokens(captions), specials=["<unk>", "<pad>", "<bos>", "<eos>"])
-        vocab.set_default_index(vocab["<unk>"])
-        
-        return vocab
-
-    def save_vocab(self, vocab, filepath):
-        torch.save(vocab, filepath)
-        print(f"Vocabulary saved to {filepath}")
-
-    def load_vocab(self, filepath):
-        vocab = torch.load(filepath)
-        print(f"Vocabulary loaded from {filepath}")
-        return vocab
 
     def __len__(self):
         return len(self.ids)
 
     def __getitem__(self, index):
         coco = self.coco
+        vocab = self.vocab
+
         ann_id = self.ids[index]
         caption = coco.anns[ann_id]['caption']
         img_id = coco.anns[ann_id]['image_id']
         path = coco.loadImgs(img_id)[0]['file_name']
-
-        image = Image.open(f"{self.data_dir}/{self.ds_type}2017/{path}").convert("RGB")
+        image = Image.open(os.path.join(self.root, path)).convert('RGB')
 
         if self.transform is not None:
             image = self.transform(image)
-        
-        tokens = self.tokenize_caption(caption)
-        token_indices = [self.vocab['<bos>']] + [self.vocab[token] for token in tokens] + [self.vocab['<eos>']]
 
-        return image, token_indices
+        ## 문장 -> 토큰화 -> 정수형
+        tokens = nltk.tokenize.word_tokenize(str(caption).lower())
+        caption = []
+        caption.append(vocab('<start>'))
+        caption.extend([vocab(token) for token in tokens])
+        caption.append(vocab('<end>'))
+        target = torch.Tensor(caption)
 
-def collate_fn(batch):
-    images, captions = zip(*batch)
-    images = torch.stack(images, 0)
-    lengths = [len(cap) for cap in captions]
-    captions = [torch.tensor(cap) for cap in captions]
-    padded_captions = torch.nn.utils.rnn.pad_sequence(captions, batch_first=True, padding_value=0)
+        return image, target
 
-    return images, padded_captions, lengths
+
+def collate_fn(data):
+    ## 문장의 길이를 기준으로 오름차순 정렬.
+    data.sort(key=lambda x: len(x[1]), reverse=True)
+    images, captions = zip(*data)
+    images = torch.stack(images, 0) ## [batch_size, channels, height, width]
+
+    ## 리스트 형태의 캡션들을 텐서 하나로 합치기(데이터 개수, 문장 내 최대 토큰 개수)
+    lengths = [len(cap) for cap in captions] ## 각 캡션의 길이를 저장한 리스트
+    targets = torch.zeros(len(captions), max(lengths)).long() ## 모든 캡션을 수용할 수 있는 크기의 2D 텐서 targets를 생성
+    for i, cap in enumerate(captions):
+        end = lengths[i]
+        targets[i, :end] = cap[:end] ## 각 캡션을 targets 텐서에 복사. 이 때 각 캡션의 실제 길이만큼 복사되고, 나머지 부분은 0으로 패딩        
+    
+    return images, targets, lengths
