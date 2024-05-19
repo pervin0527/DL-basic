@@ -33,7 +33,7 @@ class DecoderRNN(nn.Module):
         self.embed = nn.Embedding(vocab_size, embed_dim)
         self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_dim, vocab_size) ## output layer
-        self.max_seg_length = max_seq_length
+        self.max_seq_length = max_seq_length
         
     def forward(self, features, captions, lengths):
         embeddings = self.embed(captions) ## embedding된 토큰 문장.
@@ -48,7 +48,7 @@ class DecoderRNN(nn.Module):
     def sample(self, features, states=None):
         sampled_ids = []
         inputs = features.unsqueeze(1)
-        for i in range(self.max_seg_length):
+        for i in range(self.max_seq_length):
             hiddens, states = self.lstm(inputs, states) ## hiddens : (batch_size, 1, hidden_dim)
             outputs = self.linear(hiddens.squeeze(1)) ## outputs :  (batch_size, vocab_size)
             _, predicted = outputs.max(1) ## predicted: (batch_size) 확률이 가장 높은 하나를 선정.
@@ -60,31 +60,38 @@ class DecoderRNN(nn.Module):
 
         return sampled_ids
     
-    def beam_search(self, features, states=None, beam_width=3):
-        k = beam_width
-        sequences = [[list(), 0.0]]
+    def beam_search(self, features, beam_size=3, states=None):
+        device = features.device  # 입력 features의 디바이스를 가져옴
         inputs = features.unsqueeze(1)
+        batch_size = inputs.size(0)
 
-        # Iterate through the max sequence length
-        for _ in range(self.max_seq_length):
-            all_candidates = list()
-            for seq, score in sequences:
-                hiddens, states = self.lstm(inputs, states)  # hiddens: (batch_size, 1, hidden_dim)
-                outputs = self.linear(hiddens.squeeze(1))  # outputs: (batch_size, vocab_size)
-                log_probs = F.log_softmax(outputs, dim=1)  # log probabilities of words
-                topk_log_probs, topk_indices = log_probs.topk(k, dim=1)  # top k log probabilities and their indices
+        # Initialize beam
+        beam = [[(0, [], states)] for _ in range(batch_size)]
 
-                for i in range(k):
-                    candidate = [seq + [topk_indices[0][i].item()], score - topk_log_probs[0][i].item()]
-                    all_candidates.append(candidate)
-            
-            # Order all candidates by score
-            ordered = sorted(all_candidates, key=lambda tup: tup[1])
-            sequences = ordered[:k]  # Select k best
+        for i in range(self.max_seq_length):
+            all_candidates = []
+            for j in range(batch_size):
+                candidates = []
+                for score, seq, states in beam[j]:
+                    hiddens, states = self.lstm(inputs[j].unsqueeze(0), states)
+                    outputs = self.linear(hiddens.squeeze(1))
+                    log_probs = F.log_softmax(outputs, dim=1)
+                    top_k = log_probs.topk(beam_size, dim=1)
+                    for k in range(beam_size):
+                        word_id = top_k.indices[0][k].item()
+                        log_prob = top_k.values[0][k].item()
+                        candidates.append((score + log_prob, seq + [word_id], states))
+                candidates = sorted(candidates, key=lambda x: x[0], reverse=True)[:beam_size]
+                beam[j] = candidates
 
-            # Update inputs for next iteration
-            inputs = self.embed(torch.tensor([seq[0][-1] for seq, score in sequences]).to(features.device))
-            inputs = inputs.unsqueeze(1)
-        
-        best_sequence = sequences[0][0]
-        return best_sequence
+            inputs = torch.tensor([seq[-1] for _, seq, _ in beam[0]], device=device).unsqueeze(1)  # 디바이스 지정
+            inputs = self.embed(inputs)
+
+        # Get the best sequence for each example in the batch
+        sampled_ids = []
+        for j in range(batch_size):
+            score, seq, _ = max(beam[j], key=lambda x: x[0])
+            sampled_ids.append(seq)
+
+        sampled_ids = torch.tensor(sampled_ids, device=device)  # 디바이스 지정
+        return sampled_ids
