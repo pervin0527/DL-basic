@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from torch.nn import functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
 from torchvision.models import resnet152, ResNet152_Weights, efficientnet_b1, EfficientNet_B1_Weights
 
@@ -58,3 +59,32 @@ class DecoderRNN(nn.Module):
         sampled_ids = torch.stack(sampled_ids, 1) ## sampled_ids: (batch_size, max_seq_length)
 
         return sampled_ids
+    
+    def beam_search(self, features, states=None, beam_width=3):
+        k = beam_width
+        sequences = [[list(), 0.0]]
+        inputs = features.unsqueeze(1)
+
+        # Iterate through the max sequence length
+        for _ in range(self.max_seq_length):
+            all_candidates = list()
+            for seq, score in sequences:
+                hiddens, states = self.lstm(inputs, states)  # hiddens: (batch_size, 1, hidden_dim)
+                outputs = self.linear(hiddens.squeeze(1))  # outputs: (batch_size, vocab_size)
+                log_probs = F.log_softmax(outputs, dim=1)  # log probabilities of words
+                topk_log_probs, topk_indices = log_probs.topk(k, dim=1)  # top k log probabilities and their indices
+
+                for i in range(k):
+                    candidate = [seq + [topk_indices[0][i].item()], score - topk_log_probs[0][i].item()]
+                    all_candidates.append(candidate)
+            
+            # Order all candidates by score
+            ordered = sorted(all_candidates, key=lambda tup: tup[1])
+            sequences = ordered[:k]  # Select k best
+
+            # Update inputs for next iteration
+            inputs = self.embed(torch.tensor([seq[0][-1] for seq, score in sequences]).to(features.device))
+            inputs = inputs.unsqueeze(1)
+        
+        best_sequence = sequences[0][0]
+        return best_sequence

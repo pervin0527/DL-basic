@@ -9,6 +9,7 @@ from tqdm import tqdm
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
+from torch.utils.tensorboard import SummaryWriter
 
 from data.prepare_data import Vocabulary
 from models.model import EncoderCNN, DecoderRNN
@@ -19,6 +20,8 @@ def main(args):
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
     
+    writer = SummaryWriter(args.save_dir)
+
     train_transform = transforms.Compose([ 
         transforms.RandomCrop(args.crop_size),
         transforms.RandomHorizontalFlip(), 
@@ -41,13 +44,14 @@ def main(args):
     valid_dataloader = DataLoader(valid_dataset, args.batch_size, num_workers=args.num_workers, collate_fn=collate_fn)
 
     encoder = EncoderCNN(args.embed_dim).to(device)
-    decoder = DecoderRNN(args.embed_dim, args.hidden_size, len(vocab), args.num_layers).to(device)
+    decoder = DecoderRNN(args.embed_dim, args.hidden_size, len(vocab), args.num_layers, args.max_length).to(device)
     
     criterion = nn.CrossEntropyLoss()
     params = list(decoder.parameters()) + list(encoder.linear.parameters()) + list(encoder.bn.parameters())
     optimizer = torch.optim.Adam(params, lr=args.learning_rate)
 
-    total_step = len(train_dataloader)
+    total_train_step = len(train_dataloader)
+    total_valid_step = len(valid_dataloader)
     best_val_perplexity = float('inf')  # 최소 perplexity를 추적하는 변수
     
     for epoch in range(args.num_epochs):
@@ -69,7 +73,10 @@ def main(args):
             optimizer.step()
 
             if i % args.log_step == 0:
-                print(f'Train Steps : [{i}/{total_step}], Loss : {loss.item():.4f}, Perplexity : {np.exp(loss.item()):.4f}')
+                train_perplexity = np.exp(loss.item())
+                print(f'Train Steps : [{i}/{total_train_step}], Loss : {loss.item():.4f}, Perplexity : {train_perplexity:.4f}')
+                writer.add_scalar('Loss/train', loss.item(), epoch * total_train_step + i)
+                writer.add_scalar('Perplexity/train', train_perplexity, epoch * total_train_step + i)
 
         encoder.eval()
         decoder.eval()
@@ -89,10 +96,15 @@ def main(args):
                 total_val_perplexity += np.exp(loss.item())
 
                 if i % args.log_step == 0:
-                    print(f'Valid Steps : [{i}/{total_step}], Loss : {loss.item():.4f}, Perplexity : {np.exp(loss.item()):.4f}')
-        
+                    valid_perplexity = np.exp(loss.item())
+                    print(f'Valid Steps : [{i}/{total_valid_step}], Loss : {loss.item():.4f}, Perplexity : {valid_perplexity:.4f}')
+
         avg_val_loss = total_val_loss / len(valid_dataloader)
         avg_val_perplexity = total_val_perplexity / len(valid_dataloader)
+        print(f'Validation Perplexity: {avg_val_perplexity:.4f}')
+        
+        writer.add_scalar('Loss/valid', avg_val_loss, epoch)
+        writer.add_scalar('Perplexity/valid', avg_val_perplexity, epoch)
         
         if avg_val_perplexity < best_val_perplexity:
             best_val_perplexity = avg_val_perplexity
@@ -103,7 +115,7 @@ def main(args):
     torch.save(encoder.state_dict(), os.path.join(args.save_dir, 'encoder-last.ckpt'))
     torch.save(decoder.state_dict(), os.path.join(args.save_dir, 'decoder-last.ckpt'))
     print('Last model saved.')
-
+    writer.close()
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -121,10 +133,11 @@ if __name__ == '__main__':
     parser.add_argument('--embed_dim', type=int , default=512, help='dimension of word embedding vectors')
     parser.add_argument('--hidden_size', type=int , default=512, help='dimension of lstm hidden states')
     parser.add_argument('--num_layers', type=int , default=1, help='number of layers in lstm')
+    parser.add_argument('--max_length', type=int , default=100, help='number of layers in lstm')
     
-    parser.add_argument('--num_epochs', type=int, default=5)
+    parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=1024)
-    parser.add_argument('--num_workers', type=int, default=2)
+    parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--learning_rate', type=float, default=0.001)
     args = parser.parse_args()
     print(args)
