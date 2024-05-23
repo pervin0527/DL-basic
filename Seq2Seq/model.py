@@ -24,10 +24,11 @@ def weight_init(m):
 
 
 class Encoder(nn.Module):
-    def __init__(self, src_vocab_size, embed_dim, hidden_dim, n_layers=1, dropout=0.0, pad_token=0):
+    def __init__(self, src_vocab_size, embed_dim, hidden_dim, n_layers=1, dropout=0.0, pad_token=1):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.embed = nn.Embedding(src_vocab_size, embed_dim, padding_idx=pad_token)
+        # self.embed = nn.Embedding(src_vocab_size, embed_dim)
         self.lstm = nn.LSTM(embed_dim, hidden_dim, n_layers, dropout=dropout, bidirectional=True)
         self.apply(weight_init)  # 초기화 적용
 
@@ -77,11 +78,12 @@ class Attention(nn.Module):
 
 
 class AttentionDecoder(nn.Module):
-    def __init__(self, embed_dim, hidden_dim, trg_vocab_size, n_layers=1, dropout=0.0, pad_token=0):
+    def __init__(self, embed_dim, hidden_dim, trg_vocab_size, n_layers=1, dropout=0.0, pad_token=1):
         super().__init__()
         self.n_layers = n_layers
         self.trg_vocab_size = trg_vocab_size
         self.embed = nn.Embedding(trg_vocab_size, embed_dim, padding_idx=pad_token)
+        # self.embed = nn.Embedding(trg_vocab_size, embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.attention = Attention(hidden_dim)
         self.lstm = nn.LSTM(hidden_dim * 2 + embed_dim, hidden_dim, n_layers, dropout=dropout)
@@ -114,25 +116,25 @@ class AttentionDecoder(nn.Module):
 
 
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder, decoder, sos_token, eos_token, max_len, device):
+    def __init__(self, encoder, decoder, sos_token, eos_token, max_length, device):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.device = device
         self.sos_token = sos_token
         self.eos_token = eos_token
-        self.max_len = max_len
+        self.max_length = max_length
 
     def forward(self, src, trg, teacher_forcing_ratio=0.5):
         # src: (seq_len, batch_size)
         # trg: (seq_len, batch_size)
         
         batch_size = src.size(1)
-        max_len = trg.size(0)
+        max_length = trg.size(0)
         vocab_size = self.decoder.trg_vocab_size
         
-        # outputs: (max_len, batch_size, vocab_size)
-        outputs = torch.zeros(max_len, batch_size, vocab_size).to(self.device)
+        # outputs: (max_length, batch_size, vocab_size)
+        outputs = torch.zeros(max_length, batch_size, vocab_size).to(self.device)
 
         encoder_output, (hidden, cell) = self.encoder(src)
         # encoder_output: (seq_len, batch_size, hidden_dim * 2)
@@ -144,7 +146,7 @@ class Seq2Seq(nn.Module):
         decoder_input = trg.data[0, :]
         # decoder_input: (batch_size)
 
-        for t in range(1, max_len):
+        for t in range(1, max_length):
             output, decoder_hidden, _ = self.decoder(decoder_input, decoder_hidden, encoder_output)
             # output: (batch_size, vocab_size)
             # decoder_hidden: (n_layers, batch_size, hidden_dim)
@@ -158,7 +160,7 @@ class Seq2Seq(nn.Module):
             # decoder_input: (batch_size)
 
         return outputs
-        # outputs: (max_len, batch_size, vocab_size)
+        # outputs: (max_length, batch_size, vocab_size)
 
     def decode(self, src, trg, method='beam-search'):
         encoder_output, (hidden, cell) = self.encoder(src)

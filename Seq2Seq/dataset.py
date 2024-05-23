@@ -1,169 +1,149 @@
 import os
-import re
-import torch
-import pandas as pd
+import pickle
 
-from tqdm import tqdm
-from torch.utils.data import Dataset
-from torch.nn.utils.rnn import pad_sequence
+from torchtext import transforms
+from torchtext.datasets import Multi30k
 from torchtext.data.utils import get_tokenizer
+from torch.utils.data import Dataset, DataLoader
 from torchtext.vocab import build_vocab_from_iterator
 
-def english_preprocessing(data, col):
-    data[col] = data[col].astype(str)
-    data[col] = data[col].apply(lambda x: x.lower())
-    data[col] = data[col].apply(lambda x: re.sub("[^A-Za-z\s]", "", x))
-    data[col] = data[col].apply(lambda x: re.sub("\s+", " ", x))
-    data[col] = data[col].apply(lambda x: " ".join([word for word in x.split()]))
-    return data
-
-def french_preprocessing(data, col):
-    data[col] = data[col].astype(str)
-    data[col] = data[col].apply(lambda x: x.lower())
-    data[col] = data[col].apply(lambda x: re.sub(r'\d', '', x))
-    data[col] = data[col].apply(lambda x: re.sub(r'\s+', ' ', x))
-    data[col] = data[col].apply(lambda x: re.sub(r"[-()\"#/@;:<>{}`+=~|.!?,।]", "", x))
-    data[col] = data[col].apply(lambda x: x.strip())
-    return data
-
-def filterPair(pair, max_length):
-    return len(pair[0].split(' ')) < max_length and len(pair[1].split(' ')) < max_length
-
-def filterPairs(pairs, max_length):
-    filtered_pairs = [pair for pair in pairs if filterPair(pair, max_length)]
-    print(f"Filtered pairs: {len(filtered_pairs)} / {len(pairs)}")
-    return filtered_pairs
-
-def split_data(total_data_dir, train_ratio=0.8, valid_ratio=0.1, test_ratio=0.1, n_rows=500000, max_length=50):
-    df = pd.read_csv(total_data_dir, nrows=n_rows)
-    df = df.sample(frac=1).reset_index(drop=True)
-    
-    # 결측치가 없는 행 제거
-    df = df.dropna(subset=['en', 'fr'])
-
-    df = df[df['en'].apply(lambda x: isinstance(x, str))]
-    df = df[df['fr'].apply(lambda x: isinstance(x, str))]
-
-    df = english_preprocessing(df, 'en')
-    df = french_preprocessing(df, 'fr')
-    df = df[df.apply(lambda row: filterPair([row['en'], row['fr']], max_length), axis=1)]
-
-    save_dir = total_data_dir.split('/')[:-1]
-    save_dir = '/'.join(save_dir) + '/dataset'
-    os.makedirs(save_dir, exist_ok=True)
-
-    if not os.path.exists(f'{save_dir}/train.csv') or not os.path.exists(f'{save_dir}/valid.csv'):
-        total_size = len(df)
-        train_size = int(total_size * train_ratio)
-        valid_size = int(total_size * valid_ratio)
-        test_size = total_size - train_size - valid_size
-
-        train_data = df.iloc[:train_size]
-        valid_data = df.iloc[train_size:train_size + valid_size]
-        test_data = df.iloc[train_size + valid_size:]
-        
-        train_data.to_csv(f'{save_dir}/train.csv', index=False, encoding='utf-8')
-        valid_data.to_csv(f'{save_dir}/valid.csv', index=False, encoding='utf-8')
-        test_data.to_csv(f'{save_dir}/test.csv', index=False, encoding='utf-8')
-
-def tokenize_and_build_vocab(lang, pairs, pad_token, sos_token, eos_token, unk_token):
-    if lang == 'eng':
-        tokenizer = get_tokenizer('spacy', language="en_core_web_trf")
-    elif lang == 'fra':
-        tokenizer = get_tokenizer('spacy', language="fr_dep_news_trf")
+def make_dir(path):
+    if not os.path.isdir(path):
+        os.makedirs(path)
+        print(f"{path} folder maded")
     else:
-        raise ValueError(f"Unsupported language: {lang}")
+        print(f"{path} is already exist.")
 
-    vocab = build_vocab_from_iterator(
-        (tokenizer(pair[0]) if lang == 'eng' else tokenizer(pair[1]) for pair in tqdm(pairs, desc=f"Building vocab for {lang}")), min_freq=2, max_tokens=10000)
+def load_pickle(fname):
+    with open(fname, "rb") as f:
+        data = pickle.load(f)
+    return data
+
+
+def save_pickle(data, fname):
+    with open(fname, "wb") as f:
+        pickle.dump(data, f)
+
+
+def make_cache(data_path):
+    cache_path = f"{data_path}/cache"
+    make_dir(cache_path)
+
+    if not os.path.exists(f"{cache_path}/train.pkl"):
+        for name in ["train", "val", "test"]:
+            pkl_file_name = f"{cache_path}/{name}.pkl"
+
+            with open(f"{data_path}/{name}.en", "r") as file:
+                en = [text.rstrip() for text in file]
+            
+            with open(f"{data_path}/{name}.de", "r") as file:
+                de = [text.rstrip() for text in file]
+            
+            data = [(en_text, de_text) for en_text, de_text in zip(en, de)]
+            save_pickle(data, pkl_file_name)
+
+class Multi30kDataset:
+    UNK, UNK_IDX = "<unk>", 0
+    PAD, PAD_IDX = "<pad>", 1
+    SOS, SOS_IDX = "<sos>", 2
+    EOS, EOS_IDX = "<eos>", 3
+    SPECIALS = {UNK : UNK_IDX, PAD : PAD_IDX, SOS : SOS_IDX, EOS : EOS_IDX}
+
+    URL = "https://github.com/multi30k/dataset/raw/master/data/task1/raw"
+    FILES = ["test_2016_flickr.de.gz",
+             "test_2016_flickr.en.gz",
+             "train.de.gz",
+             "train.en.gz",
+             "val.de.gz",
+             "val.en.gz"]
     
-    vocab.insert_token('<pad>', pad_token)
-    vocab.insert_token('<sos>', sos_token)
-    vocab.insert_token('<eos>', eos_token)
-    vocab.insert_token('<unk>', unk_token)
-    vocab.set_default_index(vocab['<unk>'])
 
-    return vocab, tokenizer
+    def __init__(self, data_dir, source_language="en", target_language="de", max_seq_len=256, vocab_min_freq=2):
+        self.data_dir = data_dir
 
-def build_vocab(data_dir, src_lang='eng', trg_lang='fra', save_dir=None, max_length=50, n_rows=500000, tokens=[0, 1, 2, 3]):
-    df = pd.read_csv(data_dir, nrows=n_rows)
+        self.max_seq_len = max_seq_len
+        self.vocab_min_freq = vocab_min_freq
+        self.source_language = source_language
+        self.target_language = target_language
+
+        ## 데이터 파일 로드.
+        self.train = load_pickle(f"{data_dir}/cache/train.pkl")
+        self.valid = load_pickle(f"{data_dir}/cache/val.pkl")
+        self.test = load_pickle(f"{data_dir}/cache/test.pkl")
+
+        ## tokenizer 정의.
+        if self.source_language == "en":
+            self.source_tokenizer = get_tokenizer("spacy", "en_core_web_sm")
+            self.target_tokenizer = get_tokenizer("spacy", "de_core_news_sm")
+        else:
+            self.source_tokenizer = get_tokenizer("spacy", "de_core_news_sm")
+            self.target_tokenizer = get_tokenizer("spacy", "en_core_web_sm")
+
+        self.src_vocab, self.trg_vocab = self.get_vocab(self.train)
+        self.src_transform = self.get_transform(self.src_vocab)
+        self.trg_transform = self.get_transform(self.trg_vocab)
+
+
+    def yield_tokens(self, train_dataset, is_src):
+        for text_pair in train_dataset:
+            if is_src:
+                yield [str(token) for token in self.source_tokenizer(text_pair[0])]
+            else:
+                yield [str(token) for token in self.target_tokenizer(text_pair[1])]
+
+
+    def get_vocab(self, train_dataset):
+        src_vocab_pickle = f"{self.data_dir}/cache/vocab_{self.source_language}.pkl"
+        trg_vocab_pickle = f"{self.data_dir}/cache/vocab_{self.target_language}.pkl"
+
+        if os.path.exists(src_vocab_pickle) and os.path.exists(trg_vocab_pickle):
+            src_vocab = load_pickle(src_vocab_pickle)
+            trg_vocab = load_pickle(trg_vocab_pickle)
+        else:
+            src_vocab = build_vocab_from_iterator(self.yield_tokens(train_dataset, True), min_freq=self.vocab_min_freq, specials=self.SPECIALS.keys())
+            src_vocab.set_default_index(self.UNK_IDX)
+
+            trg_vocab = build_vocab_from_iterator(self.yield_tokens(train_dataset, False), min_freq=self.vocab_min_freq, specials=self.SPECIALS.keys())
+            trg_vocab.set_default_index(self.UNK_IDX)
+            
+        return src_vocab, trg_vocab
     
-    # 결측치가 없는 행 제거
-    df = df.dropna(subset=['en', 'fr'])
 
-    # 문자열이 아닌 값 필터링
-    df = df[df['en'].apply(lambda x: isinstance(x, str))]
-    df = df[df['fr'].apply(lambda x: isinstance(x, str))]
+    def get_transform(self, vocab):
+        return transforms.Sequential(transforms.VocabTransform(vocab),
+                                     transforms.Truncate(self.max_seq_len-2),
+                                     transforms.AddToken(token=self.SOS_IDX, begin=True),
+                                     transforms.AddToken(token=self.EOS_IDX, begin=False),
+                                     transforms.ToTensor(padding_value=self.PAD_IDX))
 
-    # 영어 및 프랑스어 전처리 적용
-    df = english_preprocessing(df, 'en')
-    df = french_preprocessing(df, 'fr')
 
-    pairs = [[row['en'], row['fr']] for _, row in tqdm(df.iterrows(), desc="Preparing pairs")]
-    pairs = filterPairs(pairs, max_length)
+    def collate_fn(self, pairs):
+        src = [self.source_tokenizer(pair[0]) for pair in pairs]
+        trg = [self.target_tokenizer(pair[1]) for pair in pairs]
 
-    src_vocab, src_tokenizer = tokenize_and_build_vocab(src_lang, pairs, tokens[0], tokens[1], tokens[2], tokens[3])
-    trg_vocab, trg_tokenizer = tokenize_and_build_vocab(trg_lang, pairs, tokens[0], tokens[1], tokens[2], tokens[3])
+        batch_src = self.src_transform(src)
+        batch_trg = self.trg_transform(trg)
 
-    if save_dir:
-        torch.save(src_vocab, os.path.join(save_dir, f'src_vocab_{src_lang}.pth'))
-        torch.save(trg_vocab, os.path.join(save_dir, f'trg_vocab_{trg_lang}.pth'))
+        batch_size = batch_src.size(0)
+        batch_src = batch_src.view(-1, batch_size)
+        batch_trg = batch_trg.view(-1, batch_size)
 
-    return src_vocab, src_tokenizer, trg_vocab, trg_tokenizer
+        return (batch_src, batch_trg)
+    
 
-class TranslationDataset(Dataset):
-    def __init__(self, data_dir, src_vocab, trg_vocab, src_tokenizer, trg_tokenizer, src_lang='eng', max_length=50, n_rows=500000):
-        self.src_vocab = src_vocab
-        self.trg_vocab = trg_vocab
-        self.src_tokenizer = src_tokenizer
-        self.trg_tokenizer = trg_tokenizer
-        self.max_length = max_length
+    def get_iter(self, batch_size, num_workers):
+        train_iter = DataLoader(self.train, collate_fn=self.collate_fn, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        valid_iter = DataLoader(self.valid, collate_fn=self.collate_fn, batch_size=batch_size, num_workers=num_workers)
+        test_iter = DataLoader(self.test, collate_fn=self.collate_fn, batch_size=batch_size, num_workers=num_workers)
 
-        df = pd.read_csv(data_dir, nrows=n_rows)
-        
-        # 결측치가 없는 행 제거
-        df = df.dropna(subset=['en', 'fr'])
+        return train_iter, valid_iter, test_iter
+    
+    
+    def translate(self, model, src_sentence: str, decode_func):
+        model.eval()
+        src = self.src_transform([self.source_tokenizer(src_sentence)]).view(1, -1)
+        num_tokens = src.shape[1]
+        trg_tokens = decode_func(model, src, max_len=num_tokens + 5, start_symbol=self.SOS_IDX, end_symbol=self.EOS_IDX).flatten().cpu().numpy()
+        trg_sentence = " ".join(self.trg_vocab.lookup_tokens(trg_tokens))
 
-        # 문자열이 아닌 값 필터링
-        df = df[df['en'].apply(lambda x: isinstance(x, str))]
-        df = df[df['fr'].apply(lambda x: isinstance(x, str))]
-
-        # 영어 및 프랑스어 전처리 적용
-        df = english_preprocessing(df, 'en')
-        df = french_preprocessing(df, 'fr')
-
-        self.pairs = [[row['en'], row['fr']] for _, row in df.iterrows()]
-        self.pairs = filterPairs(self.pairs, max_length)
-        if src_lang == 'fra':
-            self.pairs = [list(reversed(p)) for p in self.pairs]
-
-    def __len__(self):
-        return len(self.pairs)
-
-    def __getitem__(self, idx):
-        input_sentence, output_sentence = self.pairs[idx]
-
-        input_tokens = self.src_tokenizer(input_sentence)
-        output_tokens = self.trg_tokenizer(output_sentence)
-
-        # max_length를 초과하는 경우 슬라이싱
-        if len(input_tokens) > self.max_length - 2:  # <sos>와 <eos>를 위한 공간 확보
-            input_tokens = input_tokens[:self.max_length - 2]
-        if len(output_tokens) > self.max_length - 2:  # <sos>와 <eos>를 위한 공간 확보
-            output_tokens = output_tokens[:self.max_length - 2]
-
-        input_tensor = [self.src_vocab['<sos>']] + [self.src_vocab[token] if token in self.src_vocab else self.src_vocab['<unk>'] for token in input_tokens] + [self.src_vocab['<eos>']]
-        output_tensor = [self.trg_vocab['<sos>']] + [self.trg_vocab[token] if token in self.trg_vocab else self.trg_vocab['<unk>'] for token in output_tokens] + [self.trg_vocab['<eos>']]
-
-        return torch.tensor(input_tensor, dtype=torch.long), torch.tensor(output_tensor, dtype=torch.long)
-
-def collate_fn(batch):
-    src_batch, trg_batch = [], []
-    for src_sample, trg_sample in batch:
-        src_batch.append(src_sample)
-        trg_batch.append(trg_sample)
-
-    src_batch = pad_sequence(src_batch, padding_value=0)
-    trg_batch = pad_sequence(trg_batch, padding_value=0)
-
-    return src_batch, trg_batch
+        return trg_sentence
