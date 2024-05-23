@@ -1,0 +1,28 @@
+paths:
+  save_dir: "./runs"
+  data_dir: "/home/pervinco/Datasets/en-fr/data"
+
+lang:
+  src: "eng"
+  trg: "fra"
+  n_rows: 50000
+
+training:
+  epochs: 100
+  batch_size: 80
+  learning_rate: 0.0001
+  grad_clip: 1
+  max_length: 50
+
+model:
+  embed_dim: 620
+  hidden_dim: 1000
+  encoder_layers: 1
+  encoder_dropout: 0.0
+  decoder_dropout: 0.0
+
+tokens:
+  pad_token: 0
+  sos_token: 1
+  eos_token: 2
+  unk_token: 3
