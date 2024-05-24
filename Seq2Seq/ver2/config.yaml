@@ -12,11 +12,11 @@ training:
   batch_size: 64
   learning_rate: 0.007
   grad_clip: 1
-  max_length: 50
+  max_length: 10
 
 model:
-  embed_dim: 256 ## 620
-  hidden_dim: 512 ## 1000
+  embed_dim: 620
+  hidden_dim: 1000
   encoder_layers: 3
   decoder_layers: 2
   encoder_dropout: 0.2
