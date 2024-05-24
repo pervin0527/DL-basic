@@ -9,21 +9,21 @@ lang:
 
 training:
   epochs: 100
-  batch_size: 64
-  learning_rate: 0.007
-  grad_clip: 1
-  max_length: 10
+  batch_size: 128
+  learning_rate: 0.0001
+  grad_clip: 10.0
+  max_length: 50
 
 model:
-  embed_dim: 620
+  embed_dim: 1000
   hidden_dim: 1000
-  encoder_layers: 3
-  decoder_layers: 2
+  encoder_layers: 2
+  decoder_layers: 1
   encoder_dropout: 0.2
-  decoder_dropout: 0.2
+  decoder_dropout: 0.0
 
 tokens:
-  unk_token: 0
-  pad_token: 1
-  sos_token: 2
-  eos_token: 3
+  pad_token: 0
+  sos_token: 1
+  eos_token: 2
+  unk_token: 3

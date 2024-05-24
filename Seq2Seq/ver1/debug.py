@@ -6,7 +6,7 @@ from torch import optim
 from torch.autograd import Variable
 from torch.nn import functional as F
 from dataset import load_dataset
-from model import Encoder, AttentionDecoder, Seq2Seq
+from model_lstm import Encoder, AttentionDecoder, Seq2Seq
 
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

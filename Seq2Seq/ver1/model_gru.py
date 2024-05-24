@@ -7,13 +7,12 @@ from torch import nn
 from torch.nn import functional as F
 from queue import PriorityQueue
 
-
 def weight_init(m):
     if isinstance(m, nn.Linear):
         nn.init.normal_(m.weight, mean=0, std=0.01)
         if m.bias is not None:
             nn.init.constant_(m.bias, 0)
-    elif isinstance(m, nn.LSTM):
+    elif isinstance(m, nn.GRU): 
         for name, param in m.named_parameters():
             if 'weight_ih' in name or 'weight_hh' in name:
                 nn.init.orthogonal_(param.data)
@@ -22,14 +21,13 @@ def weight_init(m):
     elif isinstance(m, nn.Embedding):
         nn.init.normal_(m.weight, mean=0, std=0.001)
 
-
 class Encoder(nn.Module):
-    def __init__(self, src_vocab_size, embed_dim, hidden_dim, n_layers=1, dropout=0.0, pad_token=0):
+    def __init__(self, src_vocab_size, embed_dim, hidden_dim, n_layers=1, dropout=0.0, pad_token=1):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.embed = nn.Embedding(src_vocab_size, embed_dim, padding_idx=pad_token)
         # self.embed = nn.Embedding(src_vocab_size, embed_dim)
-        self.lstm = nn.LSTM(embed_dim, hidden_dim, n_layers, dropout=dropout, bidirectional=True)
+        self.gru = nn.GRU(embed_dim, hidden_dim, n_layers, dropout=dropout, bidirectional=True) 
         self.apply(weight_init)  # 초기화 적용
 
     def forward(self, src, hidden=None):
@@ -37,7 +35,7 @@ class Encoder(nn.Module):
         embedded = self.embed(src)
         # embedded: (seq_len, batch_size, embed_dim)
         
-        outputs, (hidden, cell) = self.lstm(embedded, hidden)
+        outputs, hidden = self.gru(embedded, hidden) 
         # outputs: (seq_len, batch_size, hidden_dim * 2)
         
         # 순방향과 역방향의 출력을 합침
@@ -45,8 +43,7 @@ class Encoder(nn.Module):
         # outputs: (seq_len, batch_size, hidden_dim)
         outputs = torch.cat((outputs[:, :, :self.hidden_dim], outputs[:, :, self.hidden_dim:]), dim=2)
 
-        return outputs, (hidden, cell)
-
+        return outputs, hidden
 
 class Attention(nn.Module):
     def __init__(self, hidden_dim):
@@ -76,9 +73,8 @@ class Attention(nn.Module):
         
         return F.softmax(energy, dim=1).unsqueeze(1)  # (batch_size, 1, seq_len)
 
-
 class AttentionDecoder(nn.Module):
-    def __init__(self, embed_dim, hidden_dim, trg_vocab_size, n_layers=1, dropout=0.0, pad_token=0):
+    def __init__(self, embed_dim, hidden_dim, trg_vocab_size, n_layers=1, dropout=0.0, pad_token=1):
         super().__init__()
         self.n_layers = n_layers
         self.trg_vocab_size = trg_vocab_size
@@ -86,25 +82,26 @@ class AttentionDecoder(nn.Module):
         # self.embed = nn.Embedding(trg_vocab_size, embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.attention = Attention(hidden_dim)
-        self.lstm = nn.LSTM(hidden_dim * 2 + embed_dim, hidden_dim, n_layers, dropout=dropout)
+        self.gru = nn.GRU(hidden_dim * 2 + embed_dim, hidden_dim, n_layers, dropout=dropout) 
         self.out = nn.Linear(hidden_dim * 3, trg_vocab_size)
         self.apply(weight_init)  # 초기화 적용
 
     def forward(self, input, last_hidden, encoder_outputs):
         # input: (batch_size)
-        # last_hidden: ((n_layers, batch_size, hidden_dim), (n_layers, batch_size, hidden_dim))
+        # last_hidden: (n_layers, batch_size, hidden_dim)
         # encoder_outputs: (seq_len, batch_size, hidden_dim * 2)
         
         embedded = self.embed(input).unsqueeze(0)  # (1, batch_size, embed_dim)
         embedded = self.dropout(embedded)  # (1, batch_size, embed_dim)
         
-        attn_weights = self.attention(last_hidden[0][-1], encoder_outputs)  # (batch_size, 1, seq_len)
+        attn_weights = self.attention(last_hidden[-1], encoder_outputs)  # (batch_size, 1, seq_len)
         context = attn_weights.bmm(encoder_outputs.transpose(0, 1))  # (batch_size, 1, hidden_dim * 2)
         context = context.transpose(0, 1)  # (1, batch_size, hidden_dim * 2)
         
         rnn_input = torch.cat([embedded, context], 2)  # (1, batch_size, hidden_dim * 2 + embed_dim)
         
-        output, (hidden, cell) = self.lstm(rnn_input, last_hidden)  # output: (1, batch_size, hidden_dim)
+        output, hidden = self.gru(rnn_input, last_hidden) 
+        # output: (1, batch_size, hidden_dim)
         output = output.squeeze(0)  # (batch_size, hidden_dim)
         
         context = context.squeeze(0)  # (batch_size, hidden_dim * 2)
@@ -112,8 +109,7 @@ class AttentionDecoder(nn.Module):
         
         output = F.log_softmax(output, dim=1)  # (batch_size, trg_vocab_size)
         
-        return output, (hidden, cell), attn_weights
-
+        return output, hidden, attn_weights
 
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, sos_token, eos_token, max_length, device):
@@ -136,11 +132,11 @@ class Seq2Seq(nn.Module):
         # outputs: (max_length, batch_size, vocab_size)
         outputs = torch.zeros(max_length, batch_size, vocab_size).to(self.device)
 
-        encoder_output, (hidden, cell) = self.encoder(src)
+        encoder_output, hidden = self.encoder(src) 
         # encoder_output: (seq_len, batch_size, hidden_dim * 2)
-        # hidden, cell: (n_layers * 2, batch_size, hidden_dim)
+        # hidden: (n_layers * 2, batch_size, hidden_dim)
         
-        decoder_hidden = (hidden[:self.decoder.n_layers], cell[:self.decoder.n_layers])
+        decoder_hidden = hidden[:self.decoder.n_layers]
         # decoder_hidden: (n_layers, batch_size, hidden_dim)
         
         decoder_input = trg.data[0, :]
@@ -163,18 +159,17 @@ class Seq2Seq(nn.Module):
         # outputs: (max_length, batch_size, vocab_size)
 
     def decode(self, src, trg, method='beam-search'):
-        encoder_output, (hidden, cell) = self.encoder(src)
+        encoder_output, hidden = self.encoder(src) 
         # encoder_output: (seq_len, batch_size, hidden_dim * 2)
-        # hidden, cell: (n_layers * 2, batch_size, hidden_dim)
+        # hidden: (n_layers * 2, batch_size, hidden_dim)
         
         hidden = hidden[:self.decoder.n_layers]
-        cell = cell[:self.decoder.n_layers]
-        # hidden, cell: (n_layers, batch_size, hidden_dim)
+        # hidden: (n_layers, batch_size, hidden_dim)
         
         if method == 'beam-search':
-            return self.beam_decode(trg, (hidden, cell), encoder_output)
+            return self.beam_decode(trg, hidden, encoder_output)
         else:
-            return self.greedy_decode(trg, (hidden, cell), encoder_output)
+            return self.greedy_decode(trg, hidden, encoder_output)
         
     def greedy_decode(self, trg, decoder_hidden, encoder_outputs):
         # trg: (seq_len, batch_size)
@@ -209,7 +204,7 @@ class Seq2Seq(nn.Module):
         decoded_batch = []
 
         for idx in range(batch_size):
-            decoder_hidden = (decoder_hiddens[0][:, idx, :].unsqueeze(1), decoder_hiddens[1][:, idx, :].unsqueeze(1))
+            decoder_hidden = decoder_hiddens[:, idx, :].unsqueeze(1) 
             # decoder_hidden: (n_layers, 1, hidden_dim)
             
             encoder_output = encoder_outputs[:, idx, :].unsqueeze(1)

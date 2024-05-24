@@ -43,11 +43,12 @@ def make_cache(data_path):
             save_pickle(data, pkl_file_name)
 
 class Multi30kDataset:
-    UNK, UNK_IDX = "<unk>", 0
-    PAD, PAD_IDX = "<pad>", 1
-    SOS, SOS_IDX = "<sos>", 2
-    EOS, EOS_IDX = "<eos>", 3
+    PAD, PAD_IDX = "<pad>", 0
+    SOS, SOS_IDX = "<sos>", 1
+    EOS, EOS_IDX = "<eos>", 2
+    UNK, UNK_IDX = "<unk>", 3
     SPECIALS = {UNK : UNK_IDX, PAD : PAD_IDX, SOS : SOS_IDX, EOS : EOS_IDX}
+    print(SPECIALS)
 
     URL = "https://github.com/multi30k/dataset/raw/master/data/task1/raw"
     FILES = ["test_2016_flickr.de.gz",

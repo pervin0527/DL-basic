@@ -13,8 +13,9 @@ from torch.utils.data import DataLoader
 from torchtext.data.utils import get_tokenizer
 from torch.utils.tensorboard import SummaryWriter
 
-from model import Encoder, AttentionDecoder, Seq2Seq
 from dataset import Multi30kDataset, make_cache
+from model import Encoder, AttentionDecoder, Seq2Seq
+
 
 def train(model, dataloader, optimizer, criterion, vocab_size, grad_clip, device, epoch, writer):
     model.train()
@@ -65,10 +66,10 @@ def valid(model, dataloader, criterion, trg_vocab, device, epoch, writer):
             decoded_batch = model.decode(src, trg, method='beam-search')
             decoded_batch_list.append(decoded_batch)
     
-    for sentence_index in decoded_batch_list[0]:
-        decode_text_arr = [trg_vocab.get_itos()[i] for i in sentence_index[0]]
-        decode_sentence = " ".join(decode_text_arr[1:-1])
-        print(f"Pred target : {decode_sentence}")
+    # for sentence_index in decoded_batch_list[0]:
+    #     decode_text_arr = [trg_vocab.get_itos()[i] for i in sentence_index[0]]
+    #     decode_sentence = " ".join(decode_text_arr[1:-1])
+    #     print(f"Pred target : {decode_sentence}")
 
     valid_loss = total_loss / num_batches
     valid_perplexity = math.exp(valid_loss)
@@ -101,7 +102,7 @@ if __name__ == "__main__":
     sos_token = config['tokens']['sos_token']
     eos_token = config['tokens']['eos_token']
     src_lang, trg_lang = config['lang']['src'], config['lang']['trg']
-    print(f'UNK : {unk_token}, PAD : {pad_token}, SOS : {sos_token}, EOS : {eos_token}')
+    print(f'PAD : {pad_token}, SOS : {sos_token}, EOS : {eos_token}, UNK : {unk_token}')
 
     save_dir = config['paths']['save_dir']
     data_dir = config['paths']['data_dir']
@@ -122,10 +123,8 @@ if __name__ == "__main__":
     decoder = AttentionDecoder(embed_dim, hidden_dim, trg_vocab_size, n_layers=1, pad_token=pad_token).to(device)
     seq2seq = Seq2Seq(encoder, decoder, sos_token, eos_token, max_length, device).to(device)
     optimizer = torch.optim.Adam(seq2seq.parameters(), lr=learning_rate)
-
-    # optimizer = torch.optim.Adadelta(seq2seq.parameters(), rho=0.95, eps=1e-6)
-    print("ignore_index : ", pad_token)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=pad_token)
+    print("ignore_index : ", pad_token)
     
     best_val_loss = float('inf')
     for epoch in range(1, epochs + 1):
