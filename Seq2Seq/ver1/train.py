@@ -10,8 +10,8 @@ from torchtext.data.utils import get_tokenizer
 from torch.utils.tensorboard import SummaryWriter
 
 from util import set_seed, calculate_bleu_score
-# from model_lstm import Encoder, AttentionDecoder, Seq2Seq
-from model_gru import Encoder, AttentionDecoder, Seq2Seq
+# from model_gru import Encoder, AttentionDecoder, Seq2Seq
+from model_lstm import Encoder, AttentionDecoder, Seq2Seq
 from dataset import TranslationDataset, split_data, build_vocab, collate_fn, Multi30kDataset, make_cache
 
 
@@ -135,8 +135,8 @@ def main():
     weight_decay = 0.000005
     grad_clip = 10.0
     max_length = 50
-    hidden_dim = 1000
-    embed_dim = 1000
+    hidden_dim = 512
+    embed_dim = 512
     encoder_layers = 2
     decoder_layers = 1
     encoder_dropout = 0.5
@@ -202,7 +202,7 @@ def main():
             torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'best.pth'))
     
     torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'last.pth'))
-    test_loss, test_perplexity, test_bleu = valid(seq2seq, test_dataloader, criterion, trg_vocab, device, epoch, writer)
+    test_loss, test_perplexity, test_bleu = valid(seq2seq, test_dataloader, criterion, trg_vocab, device, epoch, writer, eos_token)
     print(f'Test Loss : {test_loss:.4f}, Test Perplexity : {test_perplexity:.4f}, Test BLEU : {test_bleu:.4f}')
     writer.close()
 

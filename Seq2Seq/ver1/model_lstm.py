@@ -130,8 +130,11 @@ class Seq2Seq(nn.Module):
         # trg: (seq_len, batch_size)
         
         batch_size = src.size(1)
-        max_length = trg.size(0)
         vocab_size = self.decoder.trg_vocab_size
+        if trg is None:  # If trg is None, we are doing inference
+            max_length = self.max_length
+        else:
+            max_length = trg.size(0)
         
         # outputs: (max_length, batch_size, vocab_size)
         outputs = torch.zeros(max_length, batch_size, vocab_size).to(self.device)

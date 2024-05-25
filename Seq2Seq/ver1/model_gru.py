@@ -121,13 +121,16 @@ class Seq2Seq(nn.Module):
         self.eos_token = eos_token
         self.max_length = max_length
 
-    def forward(self, src, trg, teacher_forcing_ratio=0.5):
+    def forward(self, src, trg=None, teacher_forcing_ratio=0.5):
         # src: (seq_len, batch_size)
-        # trg: (seq_len, batch_size)
+        # trg: (seq_len, batch_size) or None for inference
         
         batch_size = src.size(1)
-        max_length = trg.size(0)
         vocab_size = self.decoder.trg_vocab_size
+        if trg is None:  # If trg is None, we are doing inference
+            max_length = self.max_length
+        else:
+            max_length = trg.size(0)
         
         # outputs: (max_length, batch_size, vocab_size)
         outputs = torch.zeros(max_length, batch_size, vocab_size).to(self.device)
@@ -139,7 +142,10 @@ class Seq2Seq(nn.Module):
         decoder_hidden = hidden[:self.decoder.n_layers]
         # decoder_hidden: (n_layers, batch_size, hidden_dim)
         
-        decoder_input = trg.data[0, :]
+        if trg is None:
+            decoder_input = torch.tensor([self.sos_token] * batch_size).to(self.device)
+        else:
+            decoder_input = trg[0, :]
         # decoder_input: (batch_size)
 
         for t in range(1, max_length):
@@ -148,7 +154,7 @@ class Seq2Seq(nn.Module):
             # decoder_hidden: (n_layers, batch_size, hidden_dim)
             
             outputs[t] = output
-            is_teacher = random.random() < teacher_forcing_ratio
+            is_teacher = trg is not None and random.random() < teacher_forcing_ratio
             top1 = output.argmax(1)
             # top1: (batch_size)
             
@@ -158,7 +164,7 @@ class Seq2Seq(nn.Module):
         return outputs
         # outputs: (max_length, batch_size, vocab_size)
 
-    def decode(self, src, trg, method='beam-search'):
+    def decode(self, src, method='beam-search'):
         encoder_output, hidden = self.encoder(src) 
         # encoder_output: (seq_len, batch_size, hidden_dim * 2)
         # hidden: (n_layers * 2, batch_size, hidden_dim)
@@ -167,18 +173,19 @@ class Seq2Seq(nn.Module):
         # hidden: (n_layers, batch_size, hidden_dim)
         
         if method == 'beam-search':
-            return self.beam_decode(trg, hidden, encoder_output)
+            return self.beam_decode(hidden, encoder_output)
         else:
-            return self.greedy_decode(trg, hidden, encoder_output)
+            return self.greedy_decode(hidden, encoder_output)
         
-    def greedy_decode(self, trg, decoder_hidden, encoder_outputs):
-        # trg: (seq_len, batch_size)
-        seq_len, batch_size = trg.size()
+    def greedy_decode(self, decoder_hidden, encoder_outputs):
+        # trg is not required for greedy_decode
+        batch_size = encoder_outputs.size(1)
+        seq_len = self.max_length
         
         decoded_batch = torch.zeros((batch_size, seq_len), dtype=torch.long).to(self.device)
         # decoded_batch: (batch_size, seq_len)
         
-        decoder_input = trg.data[0, :]
+        decoder_input = torch.tensor([self.sos_token] * batch_size).to(self.device)
         # decoder_input: (batch_size)
 
         for t in range(seq_len):
@@ -196,9 +203,8 @@ class Seq2Seq(nn.Module):
         return decoded_batch
         # decoded_batch: (batch_size, seq_len)
 
-    def beam_decode(self, target_tensor, decoder_hiddens, encoder_outputs=None):
-        # target_tensor: (seq_len, batch_size)
-        seq_len, batch_size = target_tensor.size()
+    def beam_decode(self, decoder_hiddens, encoder_outputs=None):
+        batch_size = decoder_hiddens.size(1)
         beam_width = 10
         topk = 1
         decoded_batch = []
