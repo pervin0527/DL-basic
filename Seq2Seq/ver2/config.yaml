@@ -5,9 +5,8 @@ paths:
 lang:
   src: "de"
   trg: "en"
-  n_rows: 50000
 
-training:
+hyps:
   epochs: 100
   batch_size: 128
   learning_rate: 0.0001
@@ -15,15 +14,14 @@ training:
   max_length: 50
 
 model:
-  embed_dim: 1000
-  hidden_dim: 1000
-  encoder_layers: 2
-  decoder_layers: 1
-  encoder_dropout: 0.2
-  decoder_dropout: 0.0
+  embed_dim: 256
+  encoder_hidden_dim: 512
+  decoder_hidden_dim: 512
+  encoder_drop_prob: 0.5
+  decoder_drop_prob: 0.5
 
 tokens:
-  pad_token: 0
+  unk_token: 0
+  pad_token: 1
   sos_token: 1
   eos_token: 2
-  unk_token: 3

@@ -137,9 +137,9 @@ def main():
     max_length = 50
     hidden_dim = 512
     embed_dim = 512
-    encoder_layers = 2
+    encoder_layers = 1
     decoder_layers = 1
-    encoder_dropout = 0.5
+    encoder_dropout = 0.0
     decoder_dropout = 0.0
     pad_token = 0
     sos_token = 1
@@ -202,7 +202,7 @@ def main():
             torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'best.pth'))
     
     torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'last.pth'))
-    test_loss, test_perplexity, test_bleu = valid(seq2seq, test_dataloader, criterion, trg_vocab, device, epoch, writer, eos_token)
+    test_loss, test_perplexity, test_bleu = valid(seq2seq, test_dataloader, criterion, trg_vocab_size, device, epoch, writer, eos_token)
     print(f'Test Loss : {test_loss:.4f}, Test Perplexity : {test_perplexity:.4f}, Test BLEU : {test_bleu:.4f}')
     writer.close()
 

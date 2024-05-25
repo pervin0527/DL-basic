@@ -1,57 +1,73 @@
 import os
-
-from regex import P
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import math
 import yaml
 import torch
-import random
+import nltk
+from nltk.translate.bleu_score import corpus_bleu
 
+from torch import nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from torchtext.data.utils import get_tokenizer
 from torch.utils.tensorboard import SummaryWriter
+from torchtext.datasets import multi30k, Multi30k
 
-from dataset import Multi30kDataset, make_cache
-from model import Encoder, AttentionDecoder, Seq2Seq
+from dataset import build_vocab, collate_fn
+from model import Encoder, Decoder, Attention, Seq2Seq
+
+multi30k.URL["train"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/training.tar.gz"
+multi30k.URL["valid"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/validation.tar.gz"
 
 
-def train(model, dataloader, optimizer, criterion, vocab_size, grad_clip, device, epoch, writer):
+def init_weights(m):
+    for name, param in m.named_parameters():
+        if 'weight' in name:
+            nn.init.normal_(param.data, mean=0, std=0.01)
+        else:
+            nn.init.constant_(param.data, 0)
+
+
+def train(model, optimizer, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device, writer, epoch):
     model.train()
-    total_loss = 0
-    num_batches = 0
+    dataset = list(Multi30k(split='train', language_pair=(cfg['lang']['src'], cfg['lang']['trg'])))
+    dataloader = DataLoader(dataset, batch_size=cfg['hyps']['batch_size'], collate_fn=lambda batch: collate_fn(batch, vocab_de, vocab_en, tokenize_de, tokenize_en))
+
+    epoch_loss = 0
     for src, trg in tqdm(dataloader, desc='Train', leave=False):
         src = src.to(device)
         trg = trg.to(device)
-
+        
         optimizer.zero_grad()
         output = model(src, trg)
-        output = output[1:].view(-1, vocab_size)
+        output_dim = output.shape[-1]
+        
+        output = output[1:].view(-1, output_dim)
         trg = trg[1:].view(-1)
         loss = criterion(output, trg)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg['hyps']['grad_clip'])
         optimizer.step()
-
-        total_loss += loss.item()
-        num_batches += 1
-
-    train_loss = total_loss / num_batches
-    train_perplexity = math.exp(train_loss)
-
-    writer.add_scalar('Train/Loss', train_loss, epoch)
-    writer.add_scalar('Train/Perplexity', train_perplexity, epoch)
-
-    return train_loss, train_perplexity
+        
+        epoch_loss += loss.item()
+    
+    epoch_loss /= len(dataloader)
+    perplexity = math.exp(epoch_loss)
+    writer.add_scalar('Loss/train', epoch_loss, epoch)
+    writer.add_scalar('Perplexity/train', perplexity, epoch)
+    
+    return epoch_loss
 
 
-def valid(model, dataloader, criterion, trg_vocab, device, epoch, writer):
+def eval(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device, writer, epoch):
     model.eval()
-    vocab_size = len(trg_vocab)
-    total_loss = 0
-    num_batches = 0
-    decoded_batch_list = []
+    dataset = list(Multi30k(split='valid', language_pair=(cfg['lang']['src'], cfg['lang']['trg'])))
+    dataloader = DataLoader(dataset, batch_size=cfg['hyps']['batch_size'], collate_fn=lambda batch: collate_fn(batch, vocab_de, vocab_en, tokenize_de, tokenize_en))
+    
+    epoch_loss = 0
+    references = []
+    hypotheses = []
 
     with torch.no_grad():
         for src, trg in tqdm(dataloader, desc='Valid', leave=False):
@@ -59,85 +75,80 @@ def valid(model, dataloader, criterion, trg_vocab, device, epoch, writer):
             trg = trg.to(device)
 
             output = model(src, trg)
-            output = output[1:].view(-1, vocab_size)
-            loss = criterion(output, trg[1:].contiguous().view(-1))
-            total_loss += loss.item()
-            num_batches += 1
-            decoded_batch = model.decode(src, trg, method='beam-search')
-            decoded_batch_list.append(decoded_batch)
+            output_dim = output.shape[-1]
+
+            # Keep the original trg tensor for BLEU score calculation
+            original_trg = trg[:, 1:]
+
+            pred = output[1:].view(-1, output_dim)
+            trg = trg[1:].view(-1)
+            loss = criterion(pred, trg)
+            epoch_loss += loss.item()
+
+            # BLEU score calculation
+            output_sentences = output.argmax(2).transpose(0, 1).tolist()
+            original_trg_sentences = original_trg.tolist()
+            
+            for ref, hyp in zip(original_trg_sentences, output_sentences):
+                ref_sentence = [vocab_en.lookup_token(tok) for tok in ref if tok not in [vocab_en['<pad>'], vocab_en['<sos>'], vocab_en['<eos>']]]
+                hyp_sentence = [vocab_en.lookup_token(tok) for tok in hyp if tok not in [vocab_en['<pad>'], vocab_en['<sos>'], vocab_en['<eos>']]]
+                references.append([ref_sentence])
+                hypotheses.append(hyp_sentence)
     
-    # for sentence_index in decoded_batch_list[0]:
-    #     decode_text_arr = [trg_vocab.get_itos()[i] for i in sentence_index[0]]
-    #     decode_sentence = " ".join(decode_text_arr[1:-1])
-    #     print(f"Pred target : {decode_sentence}")
+    epoch_loss /= len(dataloader)
+    perplexity = math.exp(epoch_loss)
+    writer.add_scalar('Loss/valid', epoch_loss, epoch)
+    writer.add_scalar('Perplexity/valid', perplexity, epoch)
+    
+    bleu = corpus_bleu(references, hypotheses)
+    writer.add_scalar('BLEU/valid', bleu, epoch)
+    
+    return epoch_loss, bleu
 
-    valid_loss = total_loss / num_batches
-    valid_perplexity = math.exp(valid_loss)
 
-    writer.add_scalar('Valid/Loss', valid_loss, epoch)
-    writer.add_scalar('Valid/Perplexity', valid_perplexity, epoch)
+def main():
+    with open('./config.yaml', 'r') as file:
+        cfg = yaml.safe_load(file)
 
-    return valid_loss, valid_perplexity
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    os.makedirs(cfg['paths']['save_dir'], exist_ok=True)
+    writer = SummaryWriter(log_dir=cfg['paths']['save_dir'])
 
+    special_tokens = ["<unk>", "<pad>", "<sos>", "<eos>"]
+    vocab_de, vocab_en, tokenize_de, tokenize_en = build_vocab(special_tokens)
+    
+    if cfg['lang']['src'] == 'de':
+        input_dim, output_dim = len(vocab_de), len(vocab_en)
+    else:
+        input_dim, output_dim = len(vocab_en), len(vocab_de)
+
+    attention = Attention(cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'])
+    encoder = Encoder(input_dim, cfg['model']['embed_dim'], cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'], cfg['model']['encoder_drop_prob'])
+    decoder = Decoder(output_dim, cfg['model']['embed_dim'], cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'], cfg['model']['decoder_drop_prob'], attention)
+    model = Seq2Seq(encoder, decoder, device).to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg['hyps']['learning_rate'])
+    criterion = nn.CrossEntropyLoss(ignore_index=cfg['tokens']['pad_token'])
+
+    best_valid_perplexity = float('inf')
+    for epoch in range(1, cfg['hyps']['epochs']+1):
+        print(f"\nEpoch : {epoch}")
+        train_loss = train(model, optimizer, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device, writer, epoch)
+        print(f"Train Loss : {train_loss:.4f}, Perplexity : {math.exp(train_loss):.4f}")
+
+        valid_loss, bleu_score = eval(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device, writer, epoch)
+        valid_perplexity = math.exp(valid_loss)
+        print(f"Valid Loss : {valid_loss:.4f}, Perplexity : {valid_perplexity:.4f}, BLEU Score: {bleu_score:.4f}")
+
+        if valid_perplexity < best_valid_perplexity:
+            best_valid_perplexity = valid_perplexity
+            torch.save(model.state_dict(), os.path.join(cfg['paths']['save_dir'], 'best.pth'))
+            print("Model saved as best.pth")
+
+    torch.save(model.state_dict(), os.path.join(cfg['paths']['save_dir'], 'last.pth'))
+    print("Model saved as last.pth")
+
+    writer.close()
 
 if __name__ == "__main__":
-    with open('./config.yaml', 'r') as file:
-        config = yaml.safe_load(file)
-
-    epochs = config['training']['epochs']
-    batch_size = config['training']['batch_size']
-    learning_rate = config['training']['learning_rate']
-    grad_clip = config['training']['grad_clip']
-    max_length = config['training']['max_length']
-
-    embed_dim = config['model']['embed_dim']
-    hidden_dim = config['model']['hidden_dim']
-    encoder_layers = config['model']['encoder_layers']
-    decoder_layers = config['model']['decoder_layers']
-    encoder_dropout = config['model']['encoder_dropout']
-    decoder_dropout = config['model']['decoder_dropout']
-
-    unk_token = config['tokens']['unk_token']
-    pad_token = config['tokens']['pad_token']
-    sos_token = config['tokens']['sos_token']
-    eos_token = config['tokens']['eos_token']
-    src_lang, trg_lang = config['lang']['src'], config['lang']['trg']
-    print(f'PAD : {pad_token}, SOS : {sos_token}, EOS : {eos_token}, UNK : {unk_token}')
-
-    save_dir = config['paths']['save_dir']
-    data_dir = config['paths']['data_dir']
-
-    num_workers = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    os.makedirs(save_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=save_dir)
-
-    make_cache(f"{data_dir}/Multi30k")
-    dataset = Multi30kDataset(data_dir=f"{data_dir}/Multi30k", source_language=src_lang,  target_language=trg_lang,  max_seq_len=max_length, vocab_min_freq=2)
-    train_dataloader, valid_dataloader, test_dataloader = dataset.get_iter(batch_size=batch_size, num_workers=num_workers)
-    src_vocab, trg_vocab = dataset.src_vocab, dataset.trg_vocab
-    src_vocab_size, trg_vocab_size = len(src_vocab), len(trg_vocab)
-    print(src_vocab_size, trg_vocab_size)
-
-    encoder = Encoder(src_vocab_size, embed_dim, hidden_dim, n_layers=encoder_layers, dropout=encoder_dropout, pad_token=pad_token).to(device)
-    decoder = AttentionDecoder(embed_dim, hidden_dim, trg_vocab_size, n_layers=1, pad_token=pad_token).to(device)
-    seq2seq = Seq2Seq(encoder, decoder, sos_token, eos_token, max_length, device).to(device)
-    optimizer = torch.optim.Adam(seq2seq.parameters(), lr=learning_rate)
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=pad_token)
-    print("ignore_index : ", pad_token)
-    
-    best_val_loss = float('inf')
-    for epoch in range(1, epochs + 1):
-        print(f'\nEpoch : {epoch}')
-        train_loss, train_perplexity = train(seq2seq, train_dataloader, optimizer, criterion, trg_vocab_size, grad_clip, device, epoch, writer)
-        valid_loss, valid_perplexity = valid(seq2seq, valid_dataloader, criterion, trg_vocab, device, epoch, writer)
-        print(f'Train Loss : {train_loss:.4f}, Train Perplexity : {train_perplexity:.4f}')
-        print(f'Valid Loss : {valid_loss:.4f}, Valid Perplexity : {valid_perplexity:.4f}')
-        
-        if valid_loss < best_val_loss:
-            best_val_loss = valid_loss
-            torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'best.pth'))
-    
-    torch.save(seq2seq.state_dict(), os.path.join(save_dir, 'last.pth'))
-    test_loss, test_perplexity = valid(seq2seq, test_dataloader, criterion, src_vocab, trg_vocab, device, epoch, writer)
-    writer.close()
+    main()
