@@ -1,107 +1,86 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
-import math
-import yaml
 import torch
-
+import yaml
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from torchtext.data.utils import get_tokenizer
+from torchtext.data.metrics import bleu_score
+from torchtext.datasets import multi30k, Multi30k
 
-from model import Seq2Seq, Encoder, AttentionDecoder
-from dataset_txt import TranslationDataset, collate_fn
+from dataset import build_vocab, collate_fn
+from model import Encoder, Decoder, Attention, Seq2Seq
 
-def test(model, dataloader, criterion, src_vocab, trg_vocab, device):
+multi30k.URL["valid"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/validation.tar.gz"
+
+def test(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device):
     model.eval()
-    vocab_size = len(trg_vocab)
-    total_loss = 0
-    num_batches = 0
-    decoded_batch_list = []
+    dataset = list(Multi30k(split='valid', language_pair=(cfg['lang']['src'], cfg['lang']['trg'])))
+    dataloader = DataLoader(dataset, batch_size=cfg['hyps']['batch_size'], collate_fn=lambda batch: collate_fn(batch, vocab_de, vocab_en, tokenize_de, tokenize_en))
+    
+    epoch_loss = 0
+    references = []
+    hypotheses = []
 
     with torch.no_grad():
         for src, trg in tqdm(dataloader, desc='Test', leave=False):
             src = src.to(device)
             trg = trg.to(device)
-            output = model(src, trg)
-            output = output[1:].view(-1, vocab_size)
-            loss = criterion(output, trg[1:].contiguous().view(-1))
-            total_loss += loss.item()
-            num_batches += 1
 
-            decoded_batch = model.decode(src, trg, method='beam-search')
-            decoded_batch_list.extend(decoded_batch)
+            output = model(src, trg, 0)  # Turn off teacher forcing
+            output_dim = output.shape[-1]
 
-    test_loss = total_loss / num_batches
-    test_perplexity = math.exp(test_loss)
+            # Keep the original trg tensor for BLEU score calculation
+            original_trg = trg[:, 1:]
 
-    # Print source, target, and predicted sentences
-    for i, (src_batch, trg_batch, pred_batch) in enumerate(zip(src, trg, decoded_batch_list)):
-        for j in range(src_batch.size(0)):
-            # src와 trg는 시퀀스 길이 x 배치 사이즈 형태이므로 각각의 시퀀스를 구성
-            src_sentence = ' '.join([src_vocab.get_itos()[token] for token in src_batch[:, j].cpu().numpy()])
-            trg_sentence = ' '.join([trg_vocab.get_itos()[token] for token in trg_batch[:, j].cpu().numpy()])
+            pred = output[1:].view(-1, output_dim)
+            trg = trg[1:].view(-1)
+            loss = criterion(pred, trg)
+            epoch_loss += loss.item()
 
-            # pred_batch[j]가 리스트일 경우 처리
-            if isinstance(pred_batch[j], list):
-                pred_sentence = ' '.join([trg_vocab.get_itos()[token] for token in pred_batch[j]])
-            else:
-                pred_sentence = ' '.join([trg_vocab.get_itos()[token] for token in pred_batch[j][0]])
+            # BLEU score calculation
+            output_sentences = output.argmax(2).transpose(0, 1).tolist()
+            original_trg_sentences = original_trg.tolist()
+            
+            for ref, hyp in zip(original_trg_sentences, output_sentences):
+                ref_sentence = [vocab_en.lookup_token(tok) for tok in ref if tok not in [vocab_en['<pad>'], vocab_en['<sos>'], vocab_en['<eos>']]]
+                hyp_sentence = [vocab_en.lookup_token(tok) for tok in hyp if tok not in [vocab_en['<pad>'], vocab_en['<sos>'], vocab_en['<eos>']]]
+                references.append([ref_sentence])
+                hypotheses.append(hyp_sentence)
+    
+    epoch_loss /= len(dataloader)
+    bleu = bleu_score(hypotheses, references) * 100
+    
+    return epoch_loss, bleu
 
-            print(f"Batch {i+1}, Sentence {j+1}")
-            print(f"SRC: {src_sentence}")
-            print(f"TRG: {trg_sentence}")
-            print(f"PRED: {pred_sentence}")
-            print()
 
-    return test_loss, test_perplexity
+def main():
+    with open('./config.yaml', 'r') as file:
+        cfg = yaml.safe_load(file)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    special_tokens = ["<unk>", "<pad>", "<sos>", "<eos>"]
+    vocab_de, vocab_en, tokenize_de, tokenize_en = build_vocab(special_tokens)
+    
+    if cfg['lang']['src'] == 'de':
+        input_dim, output_dim = len(vocab_de), len(vocab_en)
+    else:
+        input_dim, output_dim = len(vocab_en), len(vocab_de)
+
+    attention = Attention(cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'])
+    encoder = Encoder(input_dim, cfg['model']['embed_dim'], cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'], cfg['model']['encoder_drop_prob'])
+    decoder = Decoder(output_dim, cfg['model']['embed_dim'], cfg['model']['encoder_hidden_dim'], cfg['model']['decoder_hidden_dim'], cfg['model']['decoder_drop_prob'], attention)
+    model = Seq2Seq(encoder, decoder, device).to(device)
+
+    criterion = torch.nn.CrossEntropyLoss(ignore_index=cfg['tokens']['pad_token'])
+
+    # Load the best model weights
+    model.load_state_dict(torch.load(os.path.join(cfg['paths']['save_dir'], 'best.pth')))
+
+    test_loss, bleu_score = test(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device)
+    print(f"Test Loss : {test_loss:.4f}, BLEU Score: {bleu_score:.2f}")
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    with open('./config.yaml', 'r') as file:
-        config = yaml.safe_load(file)
-
-    batch_size = config['training']['batch_size']
-    max_length = config['training']['max_length']
-    embed_dim = config['model']['embed_dim']
-    hidden_dim = config['model']['hidden_dim']
-    encoder_layers = config['model']['encoder_layers']
-    encoder_dropout = config['model']['encoder_dropout']
-    decoder_dropout = config['model']['decoder_dropout']
-
-    pad_token = config['tokens']['pad_token']
-    sos_token = config['tokens']['sos_token']
-    eos_token = config['tokens']['eos_token']
-    unk_token = config['tokens']['unk_token']
-    src_lang, trg_lang = config['lang']['src'], config['lang']['trg']
-    n_rows = config['lang']['n_rows']
-
-    save_dir = config['paths']['save_dir']
-    data_dir = config['paths']['data_dir']
-
-    test_data_dir = f'{data_dir}/test.txt'
-    src_vocab = torch.load(f'{data_dir}/src_vocab_{src_lang}.pth')
-    trg_vocab = torch.load(f'{data_dir}/trg_vocab_{trg_lang}.pth')
-    src_vocab_size = len(src_vocab)
-    trg_vocab_size = len(trg_vocab)
-
-    if src_lang == 'eng':
-        src_tokenizer = get_tokenizer('spacy', language='en_core_web_trf')
-        trg_tokenizer = get_tokenizer('spacy', language='fr_dep_news_trf')
-    elif src_lang == 'fra':
-        src_tokenizer = get_tokenizer('spacy', language='fr_dep_news_trf')
-        trg_tokenizer = get_tokenizer('spacy', language='en_core_web_trf')
-
-    test_dataset = TranslationDataset(test_data_dir, src_vocab, trg_vocab, src_tokenizer, trg_tokenizer, src_lang)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, collate_fn=collate_fn)
-
-    encoder = Encoder(src_vocab_size, embed_dim, hidden_dim, n_layers=encoder_layers, dropout=encoder_dropout, pad_token=pad_token).to(device)
-    decoder = AttentionDecoder(embed_dim, hidden_dim, trg_vocab_size, n_layers=1, pad_token=pad_token).to(device)
-    seq2seq = Seq2Seq(encoder, decoder, sos_token, eos_token, max_length, device).to(device)
-    seq2seq.load_state_dict(torch.load(os.path.join(save_dir, 'best.pth')))
-
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=pad_token)
-    
-    test_loss, test_perplexity = test(seq2seq, test_dataloader, criterion, src_vocab, trg_vocab, device)
-    print(f'Test Loss : {test_loss:.4f}, Test Perplexity : {test_perplexity:.4f}')
+    main()

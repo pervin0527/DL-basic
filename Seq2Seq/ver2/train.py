@@ -4,13 +4,13 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import math
 import yaml
 import torch
-import nltk
-from nltk.translate.bleu_score import corpus_bleu
 
 from torch import nn
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+from torchtext.data.metrics import bleu_score
 from torch.utils.tensorboard import SummaryWriter
+from nltk.translate.bleu_score import corpus_bleu
 from torchtext.datasets import multi30k, Multi30k
 
 from dataset import build_vocab, collate_fn
@@ -18,7 +18,7 @@ from model import Encoder, Decoder, Attention, Seq2Seq
 
 multi30k.URL["train"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/training.tar.gz"
 multi30k.URL["valid"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/validation.tar.gz"
-
+multi30k.URL["test"] = "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/test_2016_flickr.de.gz"
 
 def init_weights(m):
     for name, param in m.named_parameters():
@@ -100,7 +100,7 @@ def eval(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, de
     writer.add_scalar('Loss/valid', epoch_loss, epoch)
     writer.add_scalar('Perplexity/valid', perplexity, epoch)
     
-    bleu = corpus_bleu(references, hypotheses)
+    bleu = bleu_score(hypotheses, references) * 100
     writer.add_scalar('BLEU/valid', bleu, epoch)
     
     return epoch_loss, bleu
@@ -138,7 +138,7 @@ def main():
 
         valid_loss, bleu_score = eval(model, criterion, cfg, vocab_de, vocab_en, tokenize_de, tokenize_en, device, writer, epoch)
         valid_perplexity = math.exp(valid_loss)
-        print(f"Valid Loss : {valid_loss:.4f}, Perplexity : {valid_perplexity:.4f}, BLEU Score: {bleu_score:.4f}")
+        print(f"Valid Loss : {valid_loss:.4f}, Perplexity : {valid_perplexity:.4f}, BLEU Score: {bleu_score:.2f}")
 
         if valid_perplexity < best_valid_perplexity:
             best_valid_perplexity = valid_perplexity
