@@ -7,6 +7,28 @@ from dgl.nn.functional import edge_softmax
 from torch import nn
 from torch.nn import functional as F
 
+class GraphConvolution(nn.Module):
+    def __init__(self, hidden_dim, activation=F.relu, drop_prob=0.2):
+        super().__init__()
+        self.activation = activation
+        
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.dropout = nn.Dropout(drop_prob)
+        self.linear = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+    def forward(self, graph:dgl.DGLGraph):
+        h0 = graph.ndata['h']
+
+        graph.update_all(func.copy_u('h', 'm'), func.sum('m', 'u_'))
+        h = self.activation(self.linear(graph.ndata['u_'])) + h0
+        h = self.norm(h)
+
+        h = self.dropout(h)
+        graph.ndata['h'] = h
+        
+        return graph
+
+
 class MultiLayerPerceptron(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, bias=False, activation=F.relu):
         super().__init__()

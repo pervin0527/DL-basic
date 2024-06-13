@@ -8,9 +8,9 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from models.model import GAT
 from utils.util import load_config
-from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, save_protein_ctd_to_parquet
+from models.model import GAT, GCN
+from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, save_protein_ctd_to_parquet, precompute_embeddings
 
 
 def train(model, dataloader, optimizer, criterion, device):
@@ -70,6 +70,11 @@ def valid(model, dataloader, criterion, device):
 def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    if not os.path.exists(f"{cfg['data_dir']}/protein_sequence.json"):
+        get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
+        precompute_embeddings(seq_path=f"{cfg['data_dir']}/protein_sequence.json", output_path=f"{cfg['data_dir']}/precomputed_embeddings.json")
+
+
     if not os.path.exists(f"{cfg['data_dir']}/ctd.parquet"):
         get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
         save_protein_ctd_to_parquet(f"{cfg['data_dir']}/protein_sequence.json", cfg['data_dir'])
@@ -85,8 +90,8 @@ def main(cfg):
     writer = SummaryWriter(log_dir=f"{save_dir}/logs")
 
     ## Dataset & DataLoader
-    train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/ctd.parquet", cfg['num_train_data'])
-    valid_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/ctd.parquet", cfg['num_valid_data'])
+    train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
+    valid_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
     
     train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=collate_fn)
     valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=collate_fn)
@@ -101,25 +106,33 @@ def main(cfg):
             break
 
     ## Model & Optimizer & Criterion
-    num_node_features, num_edge_features, protein_dim = 29, 6, 150
-    model = GAT(
-        initial_node_dim=num_node_features, 
-        initial_edge_dim=num_edge_features,
-        num_layers=cfg['num_layers'], 
-        num_heads=cfg['num_heads'], 
-        hidden_dim=cfg['hidden_dim'], 
-        drop_prob=cfg['drop_prob'], 
-        readout='sum', 
-        activation=F.relu,
-        mlp_bias=False,
-        protein_combined_dim=protein_dim).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'])
+    model = GAT(initial_node_dim=cfg['num_node_features'], 
+                initial_edge_dim=cfg['num_edge_features'],
+                num_layers=cfg['num_layers'], 
+                num_heads=cfg['num_heads'], 
+                hidden_dim=cfg['hidden_dim'], 
+                drop_prob=cfg['drop_prob'], 
+                protein_embedding_dim=cfg['protein_embedding_dim'],
+                readout='sum', 
+                activation=F.relu,
+                mlp_bias=False,).to(device)
+    
+    model = GCN(initial_node_dim=cfg['num_node_feautres'],
+                initial_edge_dim=cfg['num_edge_features'],
+                num_layers=cfg['num_layers'],
+                hidden_dim=cfg['hidden_dim'],
+                drop_prob=cfg['drop_prob'],
+                protein_embedding_dim=cfg['protein_embedding_dim'],
+                readout='sum',
+                activation=F.relu)
+    
     criterion = torch.nn.BCELoss()
-
-    best_valid_loss = float('inf')
-    early_stop_counter = 0
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, verbose=True)
 
     ## Training
+    early_stop_counter = 0
+    best_valid_loss = float('inf')
     for epoch in range(1, cfg['epochs']+1):
         print(f"Epoch : [{epoch}/{cfg['epochs']}]")
         train_loss, train_accuracy = train(model, train_dataloader, optimizer, criterion, device)
@@ -132,6 +145,8 @@ def main(cfg):
         writer.add_scalar('Accuracy/train', train_accuracy, epoch)
         writer.add_scalar('Loss/valid', valid_loss, epoch)
         writer.add_scalar('Accuracy/valid', valid_accuracy, epoch)
+
+        scheduler.step(valid_loss)
 
         # Save the best model
         if valid_loss < best_valid_loss:

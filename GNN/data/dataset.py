@@ -10,6 +10,7 @@ import pandas as pd
 from rdkit import Chem
 from torch.utils.data import Dataset
 from PyBioMed.Pyprotein import PyProtein
+from transformers import BertModel, BertTokenizer
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, StandardScaler
 
 def get_protein_sequences(uniprot_dicts, output_path):
@@ -65,6 +66,24 @@ def save_protein_ctd_to_parquet(protein_seq_dicts, output_path):
     ctd_df.to_parquet(f"{output_path}/ctd.parquet", index=False)
     ctd_df.to_csv(f"{output_path}/ctd.csv", index=False)
     print(f"Target Proteins CTD Saved at {output_path}/ctd.parquet \n")
+
+
+def precompute_embeddings(seq_path, output_path):
+    with open(seq_path, 'r') as file:
+        protein_seq_dicts = json.load(file)
+
+    tokenizer = BertTokenizer.from_pretrained('Rostlab/prot_bert')
+    model = BertModel.from_pretrained('Rostlab/prot_bert')
+    
+    embeddings = {}
+    for protein_name, sequence in protein_seq_dicts.items():
+        inputs = tokenizer(sequence, return_tensors="pt")
+        with torch.no_grad():
+            outputs = model(**inputs)
+        embeddings[protein_name] = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
+    
+    with open(output_path, 'w') as file:
+        json.dump(embeddings, file)
 
 
 def normalize_ctd(ctd_df):
@@ -151,7 +170,7 @@ def get_molecular_graph(smiles):
 
 
 class LeashBioDataset(Dataset):
-    def __init__(self, parquet_path, ctd_path, limit):
+    def __init__(self, parquet_path, embedding_path, limit):
         con = duckdb.connect()
         data_0 = con.query(f"""
             SELECT molecule_smiles, protein_name, binds
@@ -174,23 +193,12 @@ class LeashBioDataset(Dataset):
         binds_1_count = self.data[self.data['binds'] == 1].shape[0]
         print(f"Dataset shape: {self.data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
 
-        self.label_encoder = LabelEncoder()
-        self.data['protein_name_encoded'] = self.label_encoder.fit_transform(self.data['protein_name'])
-        self.num_proteins = len(self.label_encoder.classes_)
-
-        self.onehot_encoder = OneHotEncoder(sparse_output=False)
-        self.protein_onehot = self.onehot_encoder.fit_transform(self.data[['protein_name_encoded']])
+        with open(embedding_path, 'r') as file:
+            self.protein_embeddings = json.load(file)
 
         self.train_smiles = list(self.data['molecule_smiles'])
         self.train_labels = list(self.data['binds'])
-        self.train_proteins = list(self.data['protein_name_encoded'])
-
-        ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
-        self.ctd_df = normalize_ctd(ctd_df)
-
-        # Create a dictionary for quick lookup
-        self.protein_feature_dict = {name: features.drop(columns=['protein_name']).values.flatten()
-                                     for name, features in self.ctd_df.groupby('protein_name')}
+        self.train_proteins = list(self.data['protein_name'])
 
     def __len__(self):
         return len(self.train_labels)
@@ -198,15 +206,12 @@ class LeashBioDataset(Dataset):
     def __getitem__(self, idx):
         molecule_smiles = self.data.iloc[idx]['molecule_smiles']
         label = self.data.iloc[idx]['binds']
-        protein_name_encoded = self.data.iloc[idx]['protein_name_encoded']
+        protein_name = self.data.iloc[idx]['protein_name']
         graph = get_molecular_graph(molecule_smiles)
 
-        protein_name = self.label_encoder.inverse_transform([protein_name_encoded])[0]
-        protein_features = self.protein_feature_dict[protein_name]
-        protein_onehot = self.protein_onehot[idx]
-        protein_combined = np.concatenate((protein_onehot, protein_features))
+        protein_embedding = torch.tensor(self.protein_embeddings[protein_name])
 
-        return graph, torch.tensor(label, dtype=torch.float), torch.tensor(protein_combined, dtype=torch.float)
+        return graph, torch.tensor(label, dtype=torch.float), protein_embedding
 
 
 def collate_fn(batch):
@@ -224,45 +229,35 @@ def collate_fn(batch):
 
     return graph_list, label_list, protein_list
 
+
 class TestDataset(Dataset):
-    def __init__(self, parquet_path, ctd_path):
+    def __init__(self, parquet_path, embedding_path):
         con = duckdb.connect()
         self.data = con.query(f"""
             SELECT id, molecule_smiles, protein_name
             FROM parquet_scan('{parquet_path}')
         """).df()
 
-        self.label_encoder = LabelEncoder()
-        self.data['protein_name_encoded'] = self.label_encoder.fit_transform(self.data['protein_name'])
-
         self.test_ids = list(self.data['id'])
         self.test_smiles = list(self.data['molecule_smiles'])
-        self.test_proteins = list(self.data['protein_name_encoded'])
+        self.test_proteins = list(self.data['protein_name'])
 
-        ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
-        self.ctd_df = normalize_ctd(ctd_df)
-
-        self.onehot_encoder = OneHotEncoder(sparse_output=False)
-        self.protein_onehot = self.onehot_encoder.fit_transform(self.data[['protein_name_encoded']])
-
-        self.protein_feature_dict = {name: features.drop(columns=['protein_name']).values.flatten()
-                                     for name, features in self.ctd_df.groupby('protein_name')}
+        # Load precomputed embeddings
+        with open(embedding_path, 'r') as file:
+            self.protein_embeddings = json.load(file)
 
     def __len__(self):
         return len(self.test_smiles)
 
     def __getitem__(self, idx):
         molecule_smiles = self.data.iloc[idx]['molecule_smiles']
-        protein_name_encoded = self.data.iloc[idx]['protein_name_encoded']
+        protein_name = self.data.iloc[idx]['protein_name']
         graph = get_molecular_graph(molecule_smiles)
 
-        protein_name = self.label_encoder.inverse_transform([protein_name_encoded])[0]
-        protein_features = self.protein_feature_dict[protein_name]
-        protein_onehot = self.protein_onehot[idx]
-        protein_combined = np.concatenate((protein_onehot, protein_features))
+        # Load precomputed protein embedding
+        protein_embedding = torch.tensor(self.protein_embeddings[protein_name])
 
-        return graph, torch.tensor(protein_combined, dtype=torch.float), self.data.iloc[idx]['id']
-    
+        return graph, protein_embedding, self.data.iloc[idx]['id']
 
 def test_collate_fn(batch):
     graph_list, protein_list, id_list = [], [], []
