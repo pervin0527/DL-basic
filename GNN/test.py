@@ -12,11 +12,11 @@ from data.dataset import TestDataset, test_collate_fn
 
 def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    num_node_features, num_edge_features, num_proteins = 29, 6, len(cfg['target_proteins'])
 
-    test_dataset = TestDataset(cfg['test_parquet'])
+    test_dataset = TestDataset(cfg['test_parquet'], f"{cfg['data_dir']}/ctd.parquet")
     test_dataloader = DataLoader(test_dataset, batch_size=cfg['batch_size'], num_workers=4, collate_fn=test_collate_fn)
 
+    num_node_features, num_edge_features, protein_dim = 29, 6, 150
     model = GAT(
         initial_node_dim=num_node_features, 
         initial_edge_dim=num_edge_features,
@@ -27,7 +27,7 @@ def main(cfg):
         readout='sum', 
         activation=F.relu,
         mlp_bias=False,
-        num_proteins=num_proteins).to(device)
+        protein_combined_dim=protein_dim).to(device)
     model.load_state_dict(torch.load(f"{cfg['ckpt_dir']}/weights/best.pth", map_location=device))
     model.eval()
     

@@ -1,20 +1,20 @@
 debug: false
 data_dir: "/home/pervinco/Datasets/leash-bio"
 save_dir: "./runs"
-ckpt_dir: "/home/pervinco/Desktop/GNN/runs/2024-06-12-23-53-32"
+ckpt_dir: "/home/pervinco/DL-basic/GNN/runs/2024-06-13-15-28-00"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-num_train_data: 1000000
+num_train_data: 500000
 num_valid_data: 50000
 num_workers: 4
 
 epochs: 1000
-batch_size: 512
+batch_size: 64
 learning_rate: 0.0001
 
-num_layers: 6
+num_layers: 8
 num_heads: 4
 hidden_dim: 64
 drop_prob: 0.2

@@ -10,8 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.model import GAT
 from utils.util import load_config
-from data.utils import generate_datasets
-from data.dataset import LeashBioDataset, collate_fn
+from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, save_protein_ctd_to_parquet
 
 
 def train(model, dataloader, optimizer, criterion, device):
@@ -20,13 +19,13 @@ def train(model, dataloader, optimizer, criterion, device):
     correct = 0
     total_loss = 0.0
     for batch in tqdm(dataloader, desc='Train', leave=False):
-        graphs, labels, protein_names = batch
+        graphs, labels, proteins = batch
         graphs = graphs.to(device)
         labels = labels.to(device)
-        protein_names = protein_names.to(device)
+        proteins = proteins.to(device)
 
         optimizer.zero_grad()
-        outputs = model(graphs, protein_names).squeeze()
+        outputs = model(graphs, proteins).squeeze()
         loss = criterion(outputs, labels.float())
         loss.backward()
         optimizer.step()
@@ -49,12 +48,12 @@ def valid(model, dataloader, criterion, device):
     total_loss = 0.0
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='Valid', leave=False):
-            graphs, labels, protein_names = batch
+            graphs, labels, proteins = batch
             graphs = graphs.to(device)
             labels = labels.to(device)
-            protein_names = protein_names.to(device)
+            proteins = proteins.to(device)
 
-            outputs = model(graphs, protein_names).squeeze()
+            outputs = model(graphs, proteins).squeeze()
             loss = criterion(outputs, labels.float())
 
             total_loss += loss.item()
@@ -71,6 +70,10 @@ def valid(model, dataloader, criterion, device):
 def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    if not os.path.exists(f"{cfg['data_dir']}/ctd.parquet"):
+        get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
+        save_protein_ctd_to_parquet(f"{cfg['data_dir']}/protein_sequence.json", cfg['data_dir'])
+
     ## Save path
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     save_dir = os.path.join(cfg['save_dir'], timestamp)
@@ -82,8 +85,8 @@ def main(cfg):
     writer = SummaryWriter(log_dir=f"{save_dir}/logs")
 
     ## Dataset & DataLoader
-    train_dataset = LeashBioDataset(cfg['train_parquet'], cfg['num_train_data'])
-    valid_dataset = LeashBioDataset(cfg['train_parquet'], cfg['num_valid_data'])
+    train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/ctd.parquet", cfg['num_train_data'])
+    valid_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/ctd.parquet", cfg['num_valid_data'])
     
     train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=collate_fn)
     valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=collate_fn)
@@ -98,7 +101,7 @@ def main(cfg):
             break
 
     ## Model & Optimizer & Criterion
-    num_node_features, num_edge_features, num_proteins = 29, 6, len(cfg['target_proteins'])
+    num_node_features, num_edge_features, protein_dim = 29, 6, 150
     model = GAT(
         initial_node_dim=num_node_features, 
         initial_edge_dim=num_edge_features,
@@ -109,7 +112,7 @@ def main(cfg):
         readout='sum', 
         activation=F.relu,
         mlp_bias=False,
-        num_proteins=num_proteins).to(device)
+        protein_combined_dim=protein_dim).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'])
     criterion = torch.nn.BCELoss()
 
@@ -145,7 +148,6 @@ def main(cfg):
 
     # Save the last model
     torch.save(model.state_dict(), f"{save_dir}/weights/last.pth")
-
     writer.close()
 
 if __name__ == "__main__":
