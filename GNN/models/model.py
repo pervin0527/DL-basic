@@ -27,7 +27,7 @@ class GCN(nn.Module):
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
-            layer = GraphConvolution(hidden_dim, hidden_dim, activation, drop_prob)
+            layer = GraphConvolution(hidden_dim, activation, drop_prob)
             self.layers.append(layer)
 
         self.output = nn.Linear(hidden_dim * 2, 1, bias=False)

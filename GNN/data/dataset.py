@@ -103,34 +103,58 @@ def normalize_ctd(ctd_df):
     return ctd_df
 
 
-ATOM_VOCAB = ['C', 'S', 'N', 'Dy', 'I', 'B', 'Br', 'F', 'Si', 'O', 'Cl']
+ATOM_VOCAB = [
+	'C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg',
+	'Na', 'Ca', 'Fe', 'As', 'Al', 'I', 'B', 'V', 'K', 'Tl',
+	'Yb', 'Sb', 'Sn', 'Ag', 'Pd', 'Co', 'Se', 'Ti', 'Zn', 'H',
+	'Li', 'Ge', 'Cu', 'Au', 'Ni', 'Cd', 'In', 'Mn', 'Zr', 'Cr',
+	'Pt', 'Hg', 'Pb', 'Dy',
+	#'Unknown'
+] ## 44
 
-def one_of_k_encoding(x, vocab):
-	if x not in vocab:
-		x = vocab[-1]
-	return list(map(lambda s: float(x==s), vocab))
+HYBRIDIZATION_TYPE = [
+	Chem.rdchem.HybridizationType.S,
+	Chem.rdchem.HybridizationType.SP,
+	Chem.rdchem.HybridizationType.SP2,
+	Chem.rdchem.HybridizationType.SP3,
+	Chem.rdchem.HybridizationType.SP3D
+]
+
+def one_of_k_encoding(x, allowable_set, allow_unk=False):
+	if x not in allowable_set:
+		if allow_unk:
+			x = allowable_set[-1]
+		else:
+			raise Exception(f'input {x} not in allowable set{allowable_set}!!!')
+	return list(map(lambda s: x == s, allowable_set))
 
 
 def get_atom_feature(atom):
-    atom_feature = one_of_k_encoding(atom.GetSymbol(), ATOM_VOCAB) ## 11
-    atom_feature += one_of_k_encoding(atom.GetDegree(), [0, 1, 2, 3, 4, 5]) ## 6
-    atom_feature += one_of_k_encoding(atom.GetTotalNumHs(), [0, 1, 2, 3, 4]) ## 6
-    atom_feature += one_of_k_encoding(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5]) ## 6
-    atom_feature += [atom.GetIsAromatic()]
-    return atom_feature
+    feature = (
+        one_of_k_encoding(atom.GetSymbol(), ATOM_VOCAB)
+        + one_of_k_encoding(atom.GetHybridization(), HYBRIDIZATION_TYPE)
+        + one_of_k_encoding(atom.GetDegree(), [0, 1, 2, 3, 4, 5])
+        + one_of_k_encoding(atom.GetTotalNumHs(), [0, 1, 2, 3, 4, 5])
+        + one_of_k_encoding(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5])
+        + [atom.IsInRing()]
+        + [atom.GetIsAromatic()]
+    )
+    feature = np.array(feature, dtype=np.float32)
+    return feature
 
 
 def get_bond_feature(bond):
-    bt = bond.GetBondType()
-    bond_feature = [
-        bt == Chem.rdchem.BondType.SINGLE, ## 단일
-        bt == Chem.rdchem.BondType.DOUBLE, ## 이중
-        bt == Chem.rdchem.BondType.TRIPLE, ## 삼중
-        bt == Chem.rdchem.BondType.AROMATIC, ## 방향족
-        bond.GetIsConjugated(), ## 공액
-        bond.IsInRing() ## 고리
+    bond_type = bond.GetBondType()
+    feature = [
+        bond_type == Chem.rdchem.BondType.SINGLE,
+        bond_type == Chem.rdchem.BondType.DOUBLE,
+        bond_type == Chem.rdchem.BondType.TRIPLE,
+        bond_type == Chem.rdchem.BondType.AROMATIC,
+        bond.GetIsConjugated(),
+        bond.IsInRing()
     ]
-    return bond_feature ## 6
+    feature = np.array(feature, dtype=np.float32)
+    return feature
 
 
 def get_molecular_graph(smiles):
@@ -141,10 +165,11 @@ def get_molecular_graph(smiles):
     num_atoms = len(atom_list)
     
     ## 원자의 특징(Atom Features)
-    atom_feature_list = torch.tensor([get_atom_feature(atom) for atom in atom_list], dtype=torch.float64)
+    atom_features = [get_atom_feature(atom) for atom in atom_list]
+    atom_feature_list = torch.tensor(np.array(atom_features), dtype=torch.float32)
     
     ## 연결의 특징(Edge Features)
-    src_list, dst_list, bond_feature_list = [], [], []
+    src_list, dst_list, bond_features = [], [], []
     bond_list = molecule.GetBonds() ## 분자가 가진 bond들을 구함.
     for bond in bond_list:
         bond_feature = get_bond_feature(bond)
@@ -154,13 +179,13 @@ def get_molecular_graph(smiles):
         
         src_list.append(src)
         dst_list.append(dst)
-        bond_feature_list.append(bond_feature)
+        bond_features.append(bond_feature)
         
         src_list.append(dst)
         dst_list.append(src)
-        bond_feature_list.append(bond_feature)
+        bond_features.append(bond_feature)
 
-    bond_feature_list = torch.tensor(bond_feature_list, dtype=torch.float64)
+    bond_feature_list = torch.tensor(np.array(bond_features), dtype=torch.float32)
     
     graph = dgl.graph((src_list, dst_list), num_nodes=num_atoms)
     graph.ndata['h'] = atom_feature_list

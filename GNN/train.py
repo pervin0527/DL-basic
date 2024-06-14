@@ -8,8 +8,8 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from utils.util import load_config
 from models.model import GAT, GCN
+from utils.util import load_config, CosineAnnealingWarmUpRestarts, WarmupThenDecayScheduler
 from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, save_protein_ctd_to_parquet, precompute_embeddings
 
 
@@ -106,59 +106,65 @@ def main(cfg):
             break
 
     ## Model & Optimizer & Criterion
-    model = GAT(initial_node_dim=cfg['num_node_features'], 
-                initial_edge_dim=cfg['num_edge_features'],
-                num_layers=cfg['num_layers'], 
-                num_heads=cfg['num_heads'], 
-                hidden_dim=cfg['hidden_dim'], 
-                drop_prob=cfg['drop_prob'], 
-                protein_embedding_dim=cfg['protein_embedding_dim'],
-                readout='sum', 
-                activation=F.relu,
-                mlp_bias=False,).to(device)
-    
-    model = GCN(initial_node_dim=cfg['num_node_feautres'],
-                initial_edge_dim=cfg['num_edge_features'],
-                num_layers=cfg['num_layers'],
-                hidden_dim=cfg['hidden_dim'],
-                drop_prob=cfg['drop_prob'],
-                protein_embedding_dim=cfg['protein_embedding_dim'],
-                readout='sum',
-                activation=F.relu)
+    if cfg['model'] == "GAT":
+        model = GAT(initial_node_dim=cfg['num_node_features'], 
+                    initial_edge_dim=cfg['num_edge_features'],
+                    num_layers=cfg['num_layers'], 
+                    num_heads=cfg['num_heads'], 
+                    hidden_dim=cfg['hidden_dim'], 
+                    drop_prob=cfg['drop_prob'], 
+                    protein_embedding_dim=cfg['protein_embedding_dim'],
+                    readout='sum', 
+                    activation=F.relu,
+                    mlp_bias=False,).to(device)
+    elif cfg['model'] == "GCN":
+        model = GCN(initial_node_dim=cfg['num_node_features'],
+                    initial_edge_dim=cfg['num_edge_features'],
+                    num_layers=cfg['num_layers'],
+                    hidden_dim=cfg['hidden_dim'],
+                    drop_prob=cfg['drop_prob'],
+                    protein_embedding_dim=cfg['protein_embedding_dim'],
+                    readout='sum',
+                    activation=F.relu).to(device)
     
     criterion = torch.nn.BCELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5, verbose=True)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cfg['T_0'], T_mult=cfg['T_mult'], eta_min=cfg['min_lr'])
 
     ## Training
     early_stop_counter = 0
     best_valid_loss = float('inf')
     for epoch in range(1, cfg['epochs']+1):
-        print(f"Epoch : [{epoch}/{cfg['epochs']}]")
+        ## Log learning rate
+        for param_group in optimizer.param_groups:
+            current_lr = param_group['lr']
+            break
+        writer.add_scalar('Learning_Rate/train', current_lr, epoch)
+
+        print(f"\nEpoch : [{epoch}/{cfg['epochs']}], LR : {current_lr}")
         train_loss, train_accuracy = train(model, train_dataloader, optimizer, criterion, device)
         print(f"Train Loss : {train_loss:.4f}, Train Accuracy : {train_accuracy:.4f}")
         valid_loss, valid_accuracy = valid(model, valid_dataloader, criterion, device)
-        print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}\n")
+        print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}")
+        scheduler.step()
 
-        # TensorBoard logging
+        ## TensorBoard logging
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Accuracy/train', train_accuracy, epoch)
         writer.add_scalar('Loss/valid', valid_loss, epoch)
         writer.add_scalar('Accuracy/valid', valid_accuracy, epoch)
 
-        scheduler.step(valid_loss)
-
-        # Save the best model
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{save_dir}/weights/best.pth")
             early_stop_counter = 0
+            print(f"Validation loss improved. Reset early_stop_counter to {early_stop_counter}.")
         else:
             early_stop_counter += 1
+            print(f"No improvement in validation loss. Increase early_stop_counter to {early_stop_counter}.")
 
-        # Early stopping
         if early_stop_counter >= cfg['early_stop_patience']:
-            print(f"Early stopping at epoch {epoch}")
+            print(f"Early stopping at epoch {epoch} due to no improvement for {cfg['early_stop_patience']} consecutive epochs.")
             break
 
     # Save the last model
