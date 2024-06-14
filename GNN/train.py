@@ -12,20 +12,20 @@ from models.model import GAT, GCN
 from utils.util import load_config, CosineAnnealingWarmUpRestarts, WarmupThenDecayScheduler
 from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, save_protein_ctd_to_parquet, precompute_embeddings
 
-
 def train(model, dataloader, optimizer, criterion, device):
     model.train()
     total = 0
     correct = 0
     total_loss = 0.0
     for batch in tqdm(dataloader, desc='Train', leave=False):
-        graphs, labels, proteins = batch
-        graphs = graphs.to(device)
+        main_graphs, buildingblock_graphs, labels, proteins = batch
+        main_graphs = main_graphs.to(device)
+        buildingblock_graphs = [g.to(device) for g in buildingblock_graphs]
         labels = labels.to(device)
         proteins = proteins.to(device)
 
         optimizer.zero_grad()
-        outputs = model(graphs, proteins).squeeze()
+        outputs = model(main_graphs, buildingblock_graphs, proteins).squeeze()
         loss = criterion(outputs, labels.float())
         loss.backward()
         optimizer.step()
@@ -40,7 +40,6 @@ def train(model, dataloader, optimizer, criterion, device):
 
     return avg_loss, accuracy
 
-
 def valid(model, dataloader, criterion, device):
     model.eval()
     total = 0
@@ -48,12 +47,13 @@ def valid(model, dataloader, criterion, device):
     total_loss = 0.0
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='Valid', leave=False):
-            graphs, labels, proteins = batch
-            graphs = graphs.to(device)
+            main_graphs, buildingblock_graphs, labels, proteins = batch
+            main_graphs = main_graphs.to(device)
+            buildingblock_graphs = [g.to(device) for g in buildingblock_graphs]
             labels = labels.to(device)
             proteins = proteins.to(device)
 
-            outputs = model(graphs, proteins).squeeze()
+            outputs = model(main_graphs, buildingblock_graphs, proteins).squeeze()
             loss = criterion(outputs, labels.float())
 
             total_loss += loss.item()
@@ -66,14 +66,12 @@ def valid(model, dataloader, criterion, device):
 
     return avg_loss, accuracy
 
-
 def main(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if not os.path.exists(f"{cfg['data_dir']}/protein_sequence.json"):
         get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
         precompute_embeddings(seq_path=f"{cfg['data_dir']}/protein_sequence.json", output_path=f"{cfg['data_dir']}/precomputed_embeddings.json")
-
 
     if not os.path.exists(f"{cfg['data_dir']}/ctd.parquet"):
         get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
@@ -101,11 +99,13 @@ def main(cfg):
         print(smiles, labels, target_protein)
 
         for batch in train_dataloader:
-            graphs, labels, target_protein = batch
-            print(graphs, labels, target_protein)
+            main_graphs, buildingblock_graphs, labels, target_protein = batch
+            print(main_graphs, buildingblock_graphs, labels, target_protein)
             break
 
     ## Model & Optimizer & Criterion
+    buildingblock_embedding_dim = cfg.get('buildingblock_embedding_dim', 64)  # 기본값 설정
+
     if cfg['model'] == "GAT":
         model = GAT(initial_node_dim=cfg['num_node_features'], 
                     initial_edge_dim=cfg['num_edge_features'],
@@ -114,9 +114,10 @@ def main(cfg):
                     hidden_dim=cfg['hidden_dim'], 
                     drop_prob=cfg['drop_prob'], 
                     protein_embedding_dim=cfg['protein_embedding_dim'],
+                    buildingblock_embedding_dim=buildingblock_embedding_dim,
                     readout='sum', 
                     activation=F.relu,
-                    mlp_bias=False,).to(device)
+                    mlp_bias=False).to(device)
     elif cfg['model'] == "GCN":
         model = GCN(initial_node_dim=cfg['num_node_features'],
                     initial_edge_dim=cfg['num_edge_features'],
@@ -124,6 +125,7 @@ def main(cfg):
                     hidden_dim=cfg['hidden_dim'],
                     drop_prob=cfg['drop_prob'],
                     protein_embedding_dim=cfg['protein_embedding_dim'],
+                    buildingblock_embedding_dim=buildingblock_embedding_dim,
                     readout='sum',
                     activation=F.relu).to(device)
     

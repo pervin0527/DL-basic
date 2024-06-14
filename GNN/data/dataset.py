@@ -103,6 +103,12 @@ def normalize_ctd(ctd_df):
     return ctd_df
 
 
+def get_combined_graphs(molecule_smiles, buildingblock_smiles_list):
+    main_graph = get_molecular_graph(molecule_smiles)
+    buildingblock_graphs = [get_molecular_graph(smiles) for smiles in buildingblock_smiles_list if smiles]
+    return main_graph, buildingblock_graphs
+
+
 ATOM_VOCAB = [
 	'C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg',
 	'Na', 'Ca', 'Fe', 'As', 'Al', 'I', 'B', 'V', 'K', 'Tl',
@@ -198,15 +204,15 @@ class LeashBioDataset(Dataset):
     def __init__(self, parquet_path, embedding_path, limit):
         con = duckdb.connect()
         data_0 = con.query(f"""
-            SELECT molecule_smiles, protein_name, binds
+            SELECT molecule_smiles, buildingblock1_smiles, buildingblock2_smiles, buildingblock3_smiles, protein_name, binds
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 0
             ORDER BY random()
-            LIMIT {limit} 
+            LIMIT {limit}
         """).df()
 
         data_1 = con.query(f"""
-            SELECT molecule_smiles, protein_name, binds
+            SELECT molecule_smiles, buildingblock1_smiles, buildingblock2_smiles, buildingblock3_smiles, protein_name, binds
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 1
             ORDER BY random()
@@ -222,6 +228,7 @@ class LeashBioDataset(Dataset):
             self.protein_embeddings = json.load(file)
 
         self.train_smiles = list(self.data['molecule_smiles'])
+        self.building_block_smiles = self.data[['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles']].values.tolist()
         self.train_labels = list(self.data['binds'])
         self.train_proteins = list(self.data['protein_name'])
 
@@ -230,41 +237,46 @@ class LeashBioDataset(Dataset):
 
     def __getitem__(self, idx):
         molecule_smiles = self.data.iloc[idx]['molecule_smiles']
+        building_block_smiles_list = self.building_block_smiles[idx]
         label = self.data.iloc[idx]['binds']
         protein_name = self.data.iloc[idx]['protein_name']
-        graph = get_molecular_graph(molecule_smiles)
+        
+        main_graph, buildingblock_graphs = get_combined_graphs(molecule_smiles, building_block_smiles_list)
 
         protein_embedding = torch.tensor(self.protein_embeddings[protein_name])
 
-        return graph, torch.tensor(label, dtype=torch.float), protein_embedding
+        return main_graph, buildingblock_graphs, torch.tensor(label, dtype=torch.float), protein_embedding
 
 
 def collate_fn(batch):
-    graph_list, label_list, protein_list = [], [], []
+    main_graph_list, buildingblock_graph_lists, label_list, protein_list = [], [], [], []
 
     for item in batch:
-        graph, label, protein = item
-        graph_list.append(graph)
+        main_graph, buildingblock_graphs, label, protein = item
+        main_graph_list.append(main_graph)
+        buildingblock_graph_lists.append(buildingblock_graphs)
         label_list.append(label)
         protein_list.append(protein)
 
-    graph_list = dgl.batch(graph_list)
-    label_list = torch.stack(label_list)
+    main_graph_batch = dgl.batch(main_graph_list)
+    buildingblock_graph_batches = [dgl.batch(graph_list) for graph_list in zip(*buildingblock_graph_lists)]
+    label_list = torch.tensor(label_list, dtype=torch.float32)
     protein_list = torch.stack(protein_list)
 
-    return graph_list, label_list, protein_list
+    return main_graph_batch, buildingblock_graph_batches, label_list, protein_list
 
 
 class TestDataset(Dataset):
     def __init__(self, parquet_path, embedding_path):
         con = duckdb.connect()
         self.data = con.query(f"""
-            SELECT id, molecule_smiles, protein_name
+            SELECT id, molecule_smiles, buildingblock1_smiles, buildingblock2_smiles, buildingblock3_smiles, protein_name
             FROM parquet_scan('{parquet_path}')
         """).df()
 
         self.test_ids = list(self.data['id'])
         self.test_smiles = list(self.data['molecule_smiles'])
+        self.building_block_smiles = self.data[['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles']].values.tolist()
         self.test_proteins = list(self.data['protein_name'])
 
         # Load precomputed embeddings
@@ -276,24 +288,28 @@ class TestDataset(Dataset):
 
     def __getitem__(self, idx):
         molecule_smiles = self.data.iloc[idx]['molecule_smiles']
+        building_block_smiles_list = self.building_block_smiles[idx]
         protein_name = self.data.iloc[idx]['protein_name']
-        graph = get_molecular_graph(molecule_smiles)
+        main_graph, buildingblock_graphs = get_combined_graphs(molecule_smiles, building_block_smiles_list)
 
         # Load precomputed protein embedding
         protein_embedding = torch.tensor(self.protein_embeddings[protein_name])
 
-        return graph, protein_embedding, self.data.iloc[idx]['id']
+        return main_graph, buildingblock_graphs, protein_embedding, self.data.iloc[idx]['id']
+
 
 def test_collate_fn(batch):
-    graph_list, protein_list, id_list = [], [], []
+    main_graph_list, buildingblock_graph_lists, protein_list, id_list = [], [], [], []
     for item in batch:
-        graph, protein, id_ = item
-        graph_list.append(graph)
+        main_graph, buildingblock_graphs, protein, id_ = item
+        main_graph_list.append(main_graph)
+        buildingblock_graph_lists.append(buildingblock_graphs)
         protein_list.append(protein)
         id_list.append(id_)
 
-    graph_list = dgl.batch(graph_list)
+    main_graph_batch = dgl.batch(main_graph_list)
+    buildingblock_graph_batches = [dgl.batch(graph_list) for graph_list in zip(*buildingblock_graph_lists)]
     protein_list = torch.stack(protein_list)
     id_list = torch.tensor(id_list)
 
-    return graph_list, protein_list, id_list
+    return main_graph_batch, buildingblock_graph_batches, protein_list, id_list

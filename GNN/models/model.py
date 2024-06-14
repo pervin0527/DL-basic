@@ -16,6 +16,7 @@ class GCN(nn.Module):
                  readout='sum',  
                  activation=F.relu, 
                  protein_embedding_dim=1024,
+                 buildingblock_embedding_dim=64,
                  drop_prob=0.2):
         super().__init__()
         self.readout = readout
@@ -24,33 +25,53 @@ class GCN(nn.Module):
         self.node_embedding = nn.Linear(initial_node_dim, hidden_dim, bias=False)
         self.edge_embedding = nn.Linear(initial_edge_dim, hidden_dim, bias=False)
         self.protein_embedding = nn.Linear(protein_embedding_dim, hidden_dim, bias=False)
+        self.buildingblock_embedding = nn.Linear(hidden_dim, buildingblock_embedding_dim, bias=False)
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
             layer = GraphConvolution(hidden_dim, activation, drop_prob)
             self.layers.append(layer)
 
-        self.output = nn.Linear(hidden_dim * 2, 1, bias=False)
+        total_embedding_dim = hidden_dim * 2 + buildingblock_embedding_dim * 3
+        self.output = nn.Linear(total_embedding_dim, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, graph:dgl.DGLGraph, protein_embedding):
-        ## Graph
-        h = self.node_embedding(graph.ndata['h'].float())
-        e_ij = self.edge_embedding(graph.edata['e_ij'].float())
+    def forward(self, main_graph, buildingblock_graphs, protein_embedding):
+        ## Main graph
+        h = self.node_embedding(main_graph.ndata['h'].float())
+        e_ij = self.edge_embedding(main_graph.edata['e_ij'].float())
 
-        graph.ndata['h'] = h
-        graph.edata['e_ij'] = e_ij
+        main_graph.ndata['h'] = h
+        main_graph.edata['e_ij'] = e_ij
 
         for i in range(self.num_layers):
-            graph = self.layers[i](graph)
+            main_graph = self.layers[i](main_graph)
 
-        out = dgl.readout_nodes(graph, 'h', op=self.readout)
+        main_graph_out = dgl.readout_nodes(main_graph, 'h', op=self.readout)
+
+        ## Building block graphs
+        buildingblock_outs = []
+        for graph in buildingblock_graphs:
+            h = self.node_embedding(graph.ndata['h'].float())
+            e_ij = self.edge_embedding(graph.edata['e_ij'].float())
+
+            graph.ndata['h'] = h
+            graph.edata['e_ij'] = e_ij
+
+            for i in range(self.num_layers):
+                graph = self.layers[i](graph)
+
+            buildingblock_out = dgl.readout_nodes(graph, 'h', op=self.readout)
+            buildingblock_out = self.buildingblock_embedding(buildingblock_out)
+            buildingblock_outs.append(buildingblock_out)
+
+        buildingblock_out = torch.cat(buildingblock_outs, dim=1)
 
         ## Target protein
         protein_emb = self.protein_embedding(protein_embedding)
 
         ## Merge & output
-        out = torch.cat((out, protein_emb), dim=1)
+        out = torch.cat((main_graph_out, protein_emb, buildingblock_out), dim=1)
         out = self.output(out)
         out = self.sigmoid(out)
 
@@ -67,7 +88,8 @@ class GAT(nn.Module):
                  activation=F.relu, 
                  initial_node_dim=29, 
                  initial_edge_dim=6,
-                 protein_embedding_dim=1024):
+                 protein_embedding_dim=1024,
+                 buildingblock_embedding_dim=64):
         super().__init__()
         self.readout = readout
         self.num_layers = num_layers
@@ -75,33 +97,53 @@ class GAT(nn.Module):
         self.node_embedding = nn.Linear(initial_node_dim, hidden_dim, bias=False)
         self.edge_embedding = nn.Linear(initial_edge_dim, hidden_dim, bias=False)
         self.protein_embedding = nn.Linear(protein_embedding_dim, hidden_dim, bias=False)
+        self.buildingblock_embedding = nn.Linear(hidden_dim, buildingblock_embedding_dim, bias=False)
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
             layer = GraphAttention(hidden_dim, num_heads, mlp_bias, drop_prob, activation)
             self.layers.append(layer)
 
-        self.output = nn.Linear(hidden_dim * 2, 1, bias=False)
+        total_embedding_dim = hidden_dim * 2 + buildingblock_embedding_dim * 3
+        self.output = nn.Linear(total_embedding_dim, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, graph:dgl.DGLGraph, protein_embedding):
-        ## Graph
-        h = self.node_embedding(graph.ndata['h'].float())
-        e_ij = self.edge_embedding(graph.edata['e_ij'].float())
+    def forward(self, main_graph:dgl.DGLGraph, buildingblock_graphs, protein_embedding):
+        ## Main graph
+        h = self.node_embedding(main_graph.ndata['h'].float())
+        e_ij = self.edge_embedding(main_graph.edata['e_ij'].float())
 
-        graph.ndata['h'] = h
-        graph.edata['e_ij'] = e_ij
+        main_graph.ndata['h'] = h
+        main_graph.edata['e_ij'] = e_ij
 
         for i in range(self.num_layers):
-            graph = self.layers[i](graph)
+            main_graph = self.layers[i](main_graph)
 
-        out = dgl.readout_nodes(graph, 'h', op=self.readout)
+        main_graph_out = dgl.readout_nodes(main_graph, 'h', op=self.readout)
+
+        ## Building block graphs
+        buildingblock_outs = []
+        for graph in buildingblock_graphs:
+            h = self.node_embedding(graph.ndata['h'].float())
+            e_ij = self.edge_embedding(graph.edata['e_ij'].float())
+
+            graph.ndata['h'] = h
+            graph.edata['e_ij'] = e_ij
+
+            for i in range(self.num_layers):
+                graph = self.layers[i](graph)
+
+            buildingblock_out = dgl.readout_nodes(graph, 'h', op=self.readout)
+            buildingblock_out = self.buildingblock_embedding(buildingblock_out)
+            buildingblock_outs.append(buildingblock_out)
+
+        buildingblock_out = torch.cat(buildingblock_outs, dim=1)
 
         ## Target protein
         protein_emb = self.protein_embedding(protein_embedding)
 
         ## Merge & output
-        out = torch.cat((out, protein_emb), dim=1)
+        out = torch.cat((main_graph_out, protein_emb, buildingblock_out), dim=1)
         out = self.output(out)
         out = self.sigmoid(out)
 
