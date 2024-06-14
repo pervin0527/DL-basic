@@ -36,6 +36,13 @@ class GCN(nn.Module):
         self.output = nn.Linear(total_embedding_dim, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+
     def forward(self, main_graph, buildingblock_graphs, protein_embedding):
         ## Main graph
         h = self.node_embedding(main_graph.ndata['h'].float())
@@ -107,6 +114,13 @@ class GAT(nn.Module):
         total_embedding_dim = hidden_dim * 2 + buildingblock_embedding_dim * 3
         self.output = nn.Linear(total_embedding_dim, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
 
     def forward(self, main_graph:dgl.DGLGraph, buildingblock_graphs, protein_embedding):
         ## Main graph

@@ -1,12 +1,12 @@
 debug: false
 data_dir: "/home/pervinco/Datasets/leash-bio"
 save_dir: "./runs"
-ckpt_dir: ""
+ckpt_dir: "./runs/2024-06-14-12-38-30"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-num_train_data: 1589906 ## 1589906, 146828462
+num_train_data: 250000 ## 1589906, 146828462
 num_valid_data: 100000
 num_workers: 8
 
@@ -21,11 +21,11 @@ max_lr: 0.0001
 T_0: 200
 T_mult: 2
 
-num_layers: 6
+num_layers: 2
 num_heads: 4
-hidden_dim: 128
-drop_prob: 0.2
-early_stop_patience: 15
+hidden_dim: 32
+drop_prob: 0.3
+early_stop_patience: 10
 
 buildingblock_embedding_dim: 64
 num_node_features: 69 ## 29, 30
