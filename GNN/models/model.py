@@ -1,4 +1,3 @@
-from os import read
 import dgl
 import torch
 
@@ -44,7 +43,6 @@ class GCN(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
 
     def forward(self, main_graph, buildingblock_graphs, protein_embedding):
-        ## Main graph
         h = self.node_embedding(main_graph.ndata['h'].float())
         e_ij = self.edge_embedding(main_graph.edata['e_ij'].float())
 
@@ -56,7 +54,6 @@ class GCN(nn.Module):
 
         main_graph_out = dgl.readout_nodes(main_graph, 'h', op=self.readout)
 
-        ## Building block graphs
         buildingblock_outs = []
         for graph in buildingblock_graphs:
             h = self.node_embedding(graph.ndata['h'].float())
@@ -74,10 +71,8 @@ class GCN(nn.Module):
 
         buildingblock_out = torch.cat(buildingblock_outs, dim=1)
 
-        ## Target protein
         protein_emb = self.protein_embedding(protein_embedding)
 
-        ## Merge & output
         out = torch.cat((main_graph_out, protein_emb, buildingblock_out), dim=1)
         out = self.output(out)
         out = self.sigmoid(out)

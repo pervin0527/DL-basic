@@ -68,6 +68,23 @@ def save_protein_ctd_to_parquet(protein_seq_dicts, output_path):
     print(f"Target Proteins CTD Saved at {output_path}/ctd.parquet \n")
 
 
+def normalize_ctd(ctd_df):
+    min_max_scaler = MinMaxScaler()
+    standard_scaler = StandardScaler()
+
+    polarizability_columns = [col for col in ctd_df.columns if '_Polarizability' in col]
+    solvent_accessibility_columns = [col for col in ctd_df.columns if '_SolventAccessibility' in col]
+    ctd_df[polarizability_columns] = min_max_scaler.fit_transform(ctd_df[polarizability_columns])
+    ctd_df[solvent_accessibility_columns] = min_max_scaler.fit_transform(ctd_df[solvent_accessibility_columns])
+
+    secondary_str_columns = [col for col in ctd_df.columns if '_SecondaryStr' in col]
+    hydrophobicity_columns = [col for col in ctd_df.columns if '_Hydrophobicity' in col]
+    ctd_df[secondary_str_columns] = standard_scaler.fit_transform(ctd_df[secondary_str_columns])
+    ctd_df[hydrophobicity_columns] = standard_scaler.fit_transform(ctd_df[hydrophobicity_columns])
+    
+    return ctd_df
+
+
 def precompute_embeddings(seq_path, output_path):
     with open(seq_path, 'r') as file:
         protein_seq_dicts = json.load(file)
@@ -86,21 +103,22 @@ def precompute_embeddings(seq_path, output_path):
         json.dump(embeddings, file)
 
 
-def normalize_ctd(ctd_df):
-    min_max_scaler = MinMaxScaler()
-    standard_scaler = StandardScaler()
+def precompute_molecule_embeddings(smiles_path, output_path):
+    with open(smiles_path, 'r') as file:
+        molecule_smiles_dicts = json.load(file)
 
-    polarizability_columns = [col for col in ctd_df.columns if '_Polarizability' in col]
-    solvent_accessibility_columns = [col for col in ctd_df.columns if '_SolventAccessibility' in col]
-    ctd_df[polarizability_columns] = min_max_scaler.fit_transform(ctd_df[polarizability_columns])
-    ctd_df[solvent_accessibility_columns] = min_max_scaler.fit_transform(ctd_df[solvent_accessibility_columns])
+    tokenizer = BertTokenizer.from_pretrained('seyonec/ChemBERTa-zinc-base-v1')
+    model = BertModel.from_pretrained('seyonec/ChemBERTa-zinc-base-v1')
 
-    secondary_str_columns = [col for col in ctd_df.columns if '_SecondaryStr' in col]
-    hydrophobicity_columns = [col for col in ctd_df.columns if '_Hydrophobicity' in col]
-    ctd_df[secondary_str_columns] = standard_scaler.fit_transform(ctd_df[secondary_str_columns])
-    ctd_df[hydrophobicity_columns] = standard_scaler.fit_transform(ctd_df[hydrophobicity_columns])
-    
-    return ctd_df
+    embeddings = {}
+    for molecule_name, smiles in molecule_smiles_dicts.items():
+        inputs = tokenizer(smiles, return_tensors="pt")
+        with torch.no_grad():
+            outputs = model(**inputs)
+        embeddings[molecule_name] = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
+
+    with open(output_path, 'w') as file:
+        json.dump(embeddings, file)
 
 
 def get_combined_graphs(molecule_smiles, buildingblock_smiles_list):
