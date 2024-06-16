@@ -175,7 +175,7 @@ class LeashBioDataset(Dataset):
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 1
             ORDER BY random()
-            LIMIT {limit * 0.1}
+            LIMIT {limit}
         """).df()
 
         self.data = pd.concat([data_0, data_1])
@@ -272,3 +272,83 @@ def test_collate_fn(batch):
     id_list = torch.tensor(id_list)
 
     return main_graph_batch, buildingblock_graph_batches, protein_list, id_list
+
+
+
+def augment_smiles(smiles, num_augmented=1):
+    mol = Chem.MolFromSmiles(smiles)
+    smiles_list = [Chem.MolToSmiles(mol, doRandom=True) for _ in range(num_augmented)]
+    return smiles_list
+
+
+class AugmentedLeashBioDataset(Dataset):
+    def __init__(self, parquet_path, embedding_path, limit, num_augmented=1):
+        con = duckdb.connect()
+        data_0 = con.query(f"""
+            SELECT molecule_smiles, buildingblock1_smiles, buildingblock2_smiles, buildingblock3_smiles, protein_name, binds
+            FROM parquet_scan('{parquet_path}')
+            WHERE binds = 0
+            ORDER BY random()
+            LIMIT {limit}
+        """).df()
+
+        data_1 = con.query(f"""
+            SELECT molecule_smiles, buildingblock1_smiles, buildingblock2_smiles, buildingblock3_smiles, protein_name, binds
+            FROM parquet_scan('{parquet_path}')
+            WHERE binds = 1
+            ORDER BY random()
+            LIMIT {limit}
+        """).df()
+
+        self.data = pd.concat([data_0, data_1])
+        binds_0_count = self.data[self.data['binds'] == 0].shape[0]
+        binds_1_count = self.data[self.data['binds'] == 1].shape[0]
+        print(f"Dataset shape: {self.data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
+
+        with open(embedding_path, 'r') as file:
+            self.protein_embeddings = json.load(file)
+
+        self.train_smiles = list(self.data['molecule_smiles'])
+        self.building_block_smiles = self.data[['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles']].values.tolist()
+        self.train_labels = list(self.data['binds'])
+        self.train_proteins = list(self.data['protein_name'])
+        self.num_augmented = num_augmented
+
+    def __len__(self):
+        return len(self.train_labels) * (self.num_augmented + 1)
+
+    def __getitem__(self, idx):
+        original_idx = idx // (self.num_augmented + 1)
+        augment_idx = idx % (self.num_augmented + 1)
+        
+        molecule_smiles = self.train_smiles[original_idx]
+        building_block_smiles_list = self.building_block_smiles[original_idx]
+        label = self.train_labels[original_idx]
+        protein_name = self.train_proteins[original_idx]
+        
+        if augment_idx > 0:
+            molecule_smiles = augment_smiles(molecule_smiles, num_augmented=self.num_augmented)[augment_idx - 1]
+            building_block_smiles_list = [augment_smiles(smiles, num_augmented=self.num_augmented)[augment_idx - 1] for smiles in building_block_smiles_list if smiles]
+        
+        main_graph, buildingblock_graphs = get_combined_graphs(molecule_smiles, building_block_smiles_list)
+        protein_embedding = torch.tensor(self.protein_embeddings[protein_name])
+
+        return main_graph, buildingblock_graphs, torch.tensor(label, dtype=torch.float), protein_embedding
+
+
+def aug_collate_fn(batch):
+    main_graph_list, buildingblock_graph_lists, label_list, protein_list = [], [], [], []
+
+    for item in batch:
+        main_graph, buildingblock_graphs, label, protein = item
+        main_graph_list.append(main_graph)
+        buildingblock_graph_lists.append(buildingblock_graphs)
+        label_list.append(label)
+        protein_list.append(protein)
+
+    main_graph_batch = dgl.batch(main_graph_list)
+    buildingblock_graph_batches = [dgl.batch(graph_list) for graph_list in zip(*buildingblock_graph_lists)]
+    label_list = torch.tensor(label_list, dtype=torch.float32)
+    protein_list = torch.stack(protein_list)
+
+    return main_graph_batch, buildingblock_graph_batches, label_list, protein_list

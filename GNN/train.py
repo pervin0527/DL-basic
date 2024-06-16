@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from models.model import GAT, GCN
 from utils.util import load_config, FocalLoss, calculate_f1_score
-from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, precompute_embeddings
+from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, precompute_embeddings, AugmentedLeashBioDataset, aug_collate_fn
 
 def train(model, dataloader, optimizer, criterion, device):
     model.train()
@@ -104,12 +104,18 @@ def main(cfg):
     writer = SummaryWriter(log_dir=f"{save_dir}/logs")
 
     ## Dataset & DataLoader
-    train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
-    valid_dataset = LeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
-    
-    train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=collate_fn)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=collate_fn)
+    # train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
+    # valid_dataset = LeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
 
+    # train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=collate_fn)
+    # valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=collate_fn)
+
+    train_dataset = AugmentedLeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
+    valid_dataset = AugmentedLeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
+
+    train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=aug_collate_fn)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=aug_collate_fn)
+    
     if cfg['debug']:
         smiles, labels, target_protein = train_dataset[0]
         print(smiles, labels, target_protein)
@@ -144,13 +150,15 @@ def main(cfg):
                     readout='sum',
                     activation=F.relu).to(device)
     
+    # criterion = torch.nn.BCELoss()
     criterion = FocalLoss(alpha=0.25, gamma=2.0)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cfg['T_0'], T_mult=cfg['T_mult'], eta_min=cfg['min_lr'])
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cfg['T_0'], T_mult=cfg['T_mult'], eta_min=cfg['min_lr'])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=10, verbose=True)
 
     ## Training
     early_stop_counter = 0
-    best_valid_loss = float('inf')
+    best_valid_f1 = 0.0
     for epoch in range(1, cfg['epochs']+1):
         ## Log learning rate
         for param_group in optimizer.param_groups:
@@ -163,7 +171,8 @@ def main(cfg):
         print(f"Train Loss : {train_loss:.4f}, Train Accuracy : {train_accuracy:.4f}, Train F1 : {train_f1:.4f}")
         valid_loss, valid_accuracy, valid_f1 = valid(model, valid_dataloader, criterion, device)
         print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}, Valid F1 : {valid_f1:.4f}")
-        scheduler.step()
+        # scheduler.step()
+        scheduler.step(valid_f1)
 
         ## TensorBoard logging
         writer.add_scalar('Loss/train', train_loss, epoch)
@@ -173,14 +182,14 @@ def main(cfg):
         writer.add_scalar('Accuracy/valid', valid_accuracy, epoch)
         writer.add_scalar('F1_Score/valid', valid_f1, epoch)
 
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
+        if valid_f1 > best_valid_f1:
+            best_valid_f1 = valid_f1
             torch.save(model.state_dict(), f"{save_dir}/weights/best.pth")
             early_stop_counter = 0
-            print(f"Validation loss improved. Reset early_stop_counter to {early_stop_counter}.")
+            print(f"Validation F1 improved. Reset early_stop_counter to {early_stop_counter}.")
         else:
             early_stop_counter += 1
-            print(f"No improvement in validation loss. Increase early_stop_counter to {early_stop_counter}.")
+            print(f"No improvement in validation F1. Increase early_stop_counter to {early_stop_counter}.")
 
         if early_stop_counter >= cfg['early_stop_patience']:
             print(f"Early stopping at epoch {epoch} due to no improvement for {cfg['early_stop_patience']} consecutive epochs.")
