@@ -9,14 +9,10 @@ import pandas as pd
 
 from rdkit import Chem
 from torch.utils.data import Dataset
-from PyBioMed.Pyprotein import PyProtein
 from transformers import BertModel, BertTokenizer
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder, MinMaxScaler, StandardScaler
+
 
 def get_protein_sequences(uniprot_dicts, output_path):
-    """
-    표적 단백질에 대한 sequence 계산.
-    """
     def fetch_sequence(uniprot_id):
         url = f"https://www.uniprot.org/uniprot/{uniprot_id}.fasta"
         response = requests.get(url)
@@ -46,45 +42,6 @@ def get_protein_sequences(uniprot_dicts, output_path):
     print(f"Protein Sequence Saved at {output_path}/protein_sequence.json \n")
 
 
-def save_protein_ctd_to_parquet(protein_seq_dicts, output_path):
-    """
-    표적 단백질에 대한 CTD를 계산하고 저장.
-    """
-    ctd_features = []
-    for protein_name, sequence in protein_seq_dicts.items():
-        protein_class = PyProtein(sequence)
-        ctd = protein_class.GetCTD()
-        ctd = {'protein_name': protein_name, **ctd}
-        ctd_features.append(ctd)
-
-    ctd_df = pd.DataFrame(ctd_features)
-    ctd_df = ctd_df[['protein_name'] + [col for col in ctd_df.columns if col != 'protein_name']]
-
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
-    ctd_df.to_parquet(f"{output_path}/ctd.parquet", index=False)
-    ctd_df.to_csv(f"{output_path}/ctd.csv", index=False)
-    print(f"Target Proteins CTD Saved at {output_path}/ctd.parquet \n")
-
-
-def normalize_ctd(ctd_df):
-    min_max_scaler = MinMaxScaler()
-    standard_scaler = StandardScaler()
-
-    polarizability_columns = [col for col in ctd_df.columns if '_Polarizability' in col]
-    solvent_accessibility_columns = [col for col in ctd_df.columns if '_SolventAccessibility' in col]
-    ctd_df[polarizability_columns] = min_max_scaler.fit_transform(ctd_df[polarizability_columns])
-    ctd_df[solvent_accessibility_columns] = min_max_scaler.fit_transform(ctd_df[solvent_accessibility_columns])
-
-    secondary_str_columns = [col for col in ctd_df.columns if '_SecondaryStr' in col]
-    hydrophobicity_columns = [col for col in ctd_df.columns if '_Hydrophobicity' in col]
-    ctd_df[secondary_str_columns] = standard_scaler.fit_transform(ctd_df[secondary_str_columns])
-    ctd_df[hydrophobicity_columns] = standard_scaler.fit_transform(ctd_df[hydrophobicity_columns])
-    
-    return ctd_df
-
-
 def precompute_embeddings(seq_path, output_path):
     with open(seq_path, 'r') as file:
         protein_seq_dicts = json.load(file)
@@ -99,24 +56,6 @@ def precompute_embeddings(seq_path, output_path):
             outputs = model(**inputs)
         embeddings[protein_name] = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
     
-    with open(output_path, 'w') as file:
-        json.dump(embeddings, file)
-
-
-def precompute_molecule_embeddings(smiles_path, output_path):
-    with open(smiles_path, 'r') as file:
-        molecule_smiles_dicts = json.load(file)
-
-    tokenizer = BertTokenizer.from_pretrained('seyonec/ChemBERTa-zinc-base-v1')
-    model = BertModel.from_pretrained('seyonec/ChemBERTa-zinc-base-v1')
-
-    embeddings = {}
-    for molecule_name, smiles in molecule_smiles_dicts.items():
-        inputs = tokenizer(smiles, return_tensors="pt")
-        with torch.no_grad():
-            outputs = model(**inputs)
-        embeddings[molecule_name] = outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
-
     with open(output_path, 'w') as file:
         json.dump(embeddings, file)
 
@@ -162,6 +101,7 @@ def get_atom_feature(atom):
         + one_of_k_encoding(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5])
         + [atom.IsInRing()]
         + [atom.GetIsAromatic()]
+        + [atom.GetFormalCharge()]  # 추가 특성: 원자의 전하
     )
     feature = np.array(feature, dtype=np.float32)
     return feature
@@ -175,7 +115,8 @@ def get_bond_feature(bond):
         bond_type == Chem.rdchem.BondType.TRIPLE,
         bond_type == Chem.rdchem.BondType.AROMATIC,
         bond.GetIsConjugated(),
-        bond.IsInRing()
+        bond.IsInRing(),
+        bond.GetBondDir() == Chem.rdchem.BondDir.ENDUPRIGHT  # 추가 특성: 결합 방향성
     ]
     feature = np.array(feature, dtype=np.float32)
     return feature
@@ -234,7 +175,7 @@ class LeashBioDataset(Dataset):
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 1
             ORDER BY random()
-            LIMIT {limit}
+            LIMIT {limit * 0.1}
         """).df()
 
         self.data = pd.concat([data_0, data_1])

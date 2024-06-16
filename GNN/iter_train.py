@@ -8,8 +8,8 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from utils.util import load_config
 from models.model import GAT, GCN
-from utils.util import load_config, FocalLoss, calculate_f1_score
 from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, precompute_embeddings
 
 def train(model, dataloader, optimizer, criterion, device):
@@ -17,9 +17,6 @@ def train(model, dataloader, optimizer, criterion, device):
     total = 0
     correct = 0
     total_loss = 0.0
-    all_labels = []
-    all_outputs = []
-
     for batch in tqdm(dataloader, desc='Train', leave=False):
         main_graphs, buildingblock_graphs, labels, proteins = batch
         main_graphs = main_graphs.to(device)
@@ -38,26 +35,16 @@ def train(model, dataloader, optimizer, criterion, device):
         correct += (predicted == labels).sum().item()
         total += labels.size(0)
 
-        all_labels.append(labels)
-        all_outputs.append(outputs)
-
     avg_loss = total_loss / len(dataloader)
     accuracy = correct / total
 
-    all_labels = torch.cat(all_labels)
-    all_outputs = torch.cat(all_outputs)
-    f1 = calculate_f1_score(all_outputs, all_labels)
-
-    return avg_loss, accuracy, f1
+    return avg_loss, accuracy
 
 def valid(model, dataloader, criterion, device):
     model.eval()
     total = 0
     correct = 0
     total_loss = 0.0
-    all_labels = []
-    all_outputs = []
-
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='Valid', leave=False):
             main_graphs, buildingblock_graphs, labels, proteins = batch
@@ -74,35 +61,12 @@ def valid(model, dataloader, criterion, device):
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
 
-            all_labels.append(labels)
-            all_outputs.append(outputs)
-
     avg_loss = total_loss / len(dataloader)
     accuracy = correct / total
 
-    all_labels = torch.cat(all_labels)
-    all_outputs = torch.cat(all_outputs)
-    f1 = calculate_f1_score(all_outputs, all_labels)
+    return avg_loss, accuracy
 
-    return avg_loss, accuracy, f1
-
-def main(cfg):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    if not os.path.exists(f"{cfg['data_dir']}/protein_sequence.json"):
-        get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
-        precompute_embeddings(seq_path=f"{cfg['data_dir']}/protein_sequence.json", output_path=f"{cfg['data_dir']}/precomputed_embeddings.json")
-
-    ## Save path
-    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    save_dir = os.path.join(cfg['save_dir'], timestamp)
-    os.makedirs(f"{save_dir}/weights", exist_ok=True)
-    os.makedirs(f"{save_dir}/logs", exist_ok=True)
-    print(f"Save directory: {save_dir}")
-
-    ## Tensorboard
-    writer = SummaryWriter(log_dir=f"{save_dir}/logs")
-
+def train_and_evaluate(cfg, save_dir, writer, device):
     ## Dataset & DataLoader
     train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
     valid_dataset = LeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
@@ -121,6 +85,7 @@ def main(cfg):
 
     ## Model & Optimizer & Criterion
     buildingblock_embedding_dim = cfg.get('buildingblock_embedding_dim', 64)  # 기본값 설정
+
     if cfg['model'] == "GAT":
         model = GAT(initial_node_dim=cfg['num_node_features'], 
                     initial_edge_dim=cfg['num_edge_features'],
@@ -144,7 +109,7 @@ def main(cfg):
                     readout='sum',
                     activation=F.relu).to(device)
     
-    criterion = FocalLoss(alpha=0.25, gamma=2.0)
+    criterion = torch.nn.BCELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cfg['T_0'], T_mult=cfg['T_mult'], eta_min=cfg['min_lr'])
 
@@ -159,19 +124,17 @@ def main(cfg):
         writer.add_scalar('Learning_Rate/train', current_lr, epoch)
 
         print(f"\nEpoch : [{epoch}/{cfg['epochs']}], LR : {current_lr}")
-        train_loss, train_accuracy, train_f1 = train(model, train_dataloader, optimizer, criterion, device)
-        print(f"Train Loss : {train_loss:.4f}, Train Accuracy : {train_accuracy:.4f}, Train F1 : {train_f1:.4f}")
-        valid_loss, valid_accuracy, valid_f1 = valid(model, valid_dataloader, criterion, device)
-        print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}, Valid F1 : {valid_f1:.4f}")
+        train_loss, train_accuracy = train(model, train_dataloader, optimizer, criterion, device)
+        print(f"Train Loss : {train_loss:.4f}, Train Accuracy : {train_accuracy:.4f}")
+        valid_loss, valid_accuracy = valid(model, valid_dataloader, criterion, device)
+        print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}")
         scheduler.step()
 
         ## TensorBoard logging
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Accuracy/train', train_accuracy, epoch)
-        writer.add_scalar('F1_Score/train', train_f1, epoch)
         writer.add_scalar('Loss/valid', valid_loss, epoch)
         writer.add_scalar('Accuracy/valid', valid_accuracy, epoch)
-        writer.add_scalar('F1_Score/valid', valid_f1, epoch)
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
@@ -189,6 +152,29 @@ def main(cfg):
     # Save the last model
     torch.save(model.state_dict(), f"{save_dir}/weights/last.pth")
     writer.close()
+
+
+def main(cfg):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if not os.path.exists(f"{cfg['data_dir']}/protein_sequence.json"):
+        get_protein_sequences(cfg['uniprot_dicts'], cfg['data_dir'])
+        precompute_embeddings(seq_path=f"{cfg['data_dir']}/protein_sequence.json", output_path=f"{cfg['data_dir']}/precomputed_embeddings.json")
+
+    for iteration in range(cfg['n_iter']):
+        ## Save path
+        timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+        save_dir = os.path.join(cfg['save_dir'], f"{timestamp}_iter_{iteration}")
+        os.makedirs(f"{save_dir}/weights", exist_ok=True)
+        os.makedirs(f"{save_dir}/logs", exist_ok=True)
+        print(f"Save directory: {save_dir}")
+
+        ## Tensorboard
+        writer = SummaryWriter(log_dir=f"{save_dir}/logs")
+
+        # Train and evaluate the model
+        train_and_evaluate(cfg, save_dir, writer, device)
+
 
 if __name__ == "__main__":
     config_path = 'config.yaml'

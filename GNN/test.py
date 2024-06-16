@@ -18,15 +18,30 @@ def main(cfg):
     test_dataset = TestDataset(cfg['test_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json")
     test_dataloader = DataLoader(test_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=test_collate_fn)
 
-    model = GCN(
-        initial_node_dim=cfg['num_node_features'], 
-        initial_edge_dim=cfg['num_edge_features'],
-        num_layers=cfg['num_layers'], 
-        hidden_dim=cfg['hidden_dim'], 
-        buildingblock_embedding_dim=cfg['buildingblock_embedding_dim'],
-        drop_prob=cfg['drop_prob'], 
-        readout='sum', 
-        activation=F.relu).to(device)
+    buildingblock_embedding_dim = cfg.get('buildingblock_embedding_dim', 64)
+    if cfg['model'] == "GAT":
+        model = GAT(initial_node_dim=cfg['num_node_features'], 
+                    initial_edge_dim=cfg['num_edge_features'],
+                    num_layers=cfg['num_layers'], 
+                    num_heads=cfg['num_heads'], 
+                    hidden_dim=cfg['hidden_dim'], 
+                    drop_prob=cfg['drop_prob'], 
+                    protein_embedding_dim=cfg['protein_embedding_dim'],
+                    buildingblock_embedding_dim=buildingblock_embedding_dim,
+                    readout='sum', 
+                    activation=F.relu,
+                    mlp_bias=False).to(device)
+    elif cfg['model'] == "GCN":
+        model = GCN(initial_node_dim=cfg['num_node_features'],
+                    initial_edge_dim=cfg['num_edge_features'],
+                    num_layers=cfg['num_layers'],
+                    hidden_dim=cfg['hidden_dim'],
+                    drop_prob=cfg['drop_prob'],
+                    protein_embedding_dim=cfg['protein_embedding_dim'],
+                    buildingblock_embedding_dim=buildingblock_embedding_dim,
+                    readout='sum',
+                    activation=F.relu).to(device)
+        
     model.load_state_dict(torch.load(f"{cfg['ckpt_dir']}/weights/best.pth", map_location=device))
     model.eval()
     

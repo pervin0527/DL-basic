@@ -1,36 +1,40 @@
 debug: false
 data_dir: "/home/pervinco/Datasets/leash-bio"
 save_dir: "./runs"
-ckpt_dir: "./runs/2024-06-14-17-43-43"
+ckpt_dir: ""
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train_split.parquet"
 valid_parquet: "/home/pervinco/Datasets/leash-bio/valid_split.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-num_train_data: 250000 ## 1589906, 146828462
-num_valid_data: 100000
+num_train_data: 1000000 ## 1589906, 146828462
+num_valid_data: 50000
 num_workers: 8
 
+n_iter: 10
 model: "GAT"
 epochs: 1000
-batch_size: 128
+batch_size: 256
 learning_rate: 0.0001
-weight_decay: 0.000002
+weight_decay: 0.000001
 
 min_lr: 0.0000001
 max_lr: 0.0001
 T_0: 200
 T_mult: 2
 
-num_layers: 3
+patience: 10
+factor: 0.1
+
+num_layers: 4
 num_heads: 4
-hidden_dim: 32
-drop_prob: 0.3
+hidden_dim: 64
+buildingblock_embedding_dim: 64
+drop_prob: 0.5
 early_stop_patience: 10
 
-buildingblock_embedding_dim: 64
-num_node_features: 69 ## 29, 30
-num_edge_features: 6 ## 6
+num_node_features: 70 ## 29, 30
+num_edge_features: 7 ## 6
 protein_dim: 150
 protein_embedding_dim: 1024
 
