@@ -1,3 +1,4 @@
+import os
 import yaml
 import math
 import torch
@@ -7,6 +8,21 @@ from sklearn.metrics import f1_score
 from torch import nn
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import _LRScheduler
+
+def save_config(cfg, save_dir):
+    config_path = os.path.join(save_dir, 'config.yaml')
+    with open(config_path, 'w') as f:
+        yaml.dump(cfg, f)
+    print(f"Configuration saved to {config_path}")
+
+
+def load_checkpoint(model, ckpt_dir):
+    checkpoint_path = os.path.join(ckpt_dir, 'weights', 'best.pth')
+    if os.path.exists(checkpoint_path):
+        model.load_state_dict(torch.load(checkpoint_path))
+        print(f"Checkpoint loaded from {checkpoint_path}")
+    else:
+        print(f"No checkpoint found at {checkpoint_path}")
 
 
 def load_config(config_path):

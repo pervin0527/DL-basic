@@ -9,8 +9,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from models.model import GAT, GCN
-from utils.util import load_config, FocalLoss, calculate_f1_score
+from utils.util import load_config, FocalLoss, calculate_f1_score, save_config, load_checkpoint
 from data.dataset import LeashBioDataset, collate_fn, get_protein_sequences, precompute_embeddings, AugmentedLeashBioDataset, aug_collate_fn
+
 
 def train(model, dataloader, optimizer, criterion, device):
     model.train()
@@ -100,16 +101,13 @@ def main(cfg):
     os.makedirs(f"{save_dir}/logs", exist_ok=True)
     print(f"Save directory: {save_dir}")
 
+    ## Save config
+    save_config(cfg, save_dir)
+
     ## Tensorboard
     writer = SummaryWriter(log_dir=f"{save_dir}/logs")
 
     ## Dataset & DataLoader
-    # train_dataset = LeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
-    # valid_dataset = LeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
-
-    # train_dataloader = DataLoader(train_dataset, batch_size=cfg['batch_size'], shuffle=True, num_workers=cfg['num_workers'], collate_fn=collate_fn)
-    # valid_dataloader = DataLoader(valid_dataset, batch_size=cfg['batch_size'], num_workers=cfg['num_workers'], collate_fn=collate_fn)
-
     train_dataset = AugmentedLeashBioDataset(cfg['train_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_train_data'])
     valid_dataset = AugmentedLeashBioDataset(cfg['valid_parquet'], f"{cfg['data_dir']}/precomputed_embeddings.json", cfg['num_valid_data'])
 
@@ -149,11 +147,14 @@ def main(cfg):
                     buildingblock_embedding_dim=buildingblock_embedding_dim,
                     readout='sum',
                     activation=F.relu).to(device)
+
+    ## Load checkpoint if exists
+    if cfg['ckpt_dir']:
+        load_checkpoint(model, cfg['ckpt_dir'])
+        print(f"weight file {cfg['ckpt_dir']} load.")
     
-    # criterion = torch.nn.BCELoss()
-    criterion = FocalLoss(alpha=0.25, gamma=2.0)
+    criterion = torch.nn.BCELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=cfg['T_0'], T_mult=cfg['T_mult'], eta_min=cfg['min_lr'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=10, verbose=True)
 
     ## Training
@@ -171,7 +172,6 @@ def main(cfg):
         print(f"Train Loss : {train_loss:.4f}, Train Accuracy : {train_accuracy:.4f}, Train F1 : {train_f1:.4f}")
         valid_loss, valid_accuracy, valid_f1 = valid(model, valid_dataloader, criterion, device)
         print(f"Valid Loss : {valid_loss:.4f}, Valid Accuracy : {valid_accuracy:.4f}, Valid F1 : {valid_f1:.4f}")
-        # scheduler.step()
         scheduler.step(valid_f1)
 
         ## TensorBoard logging
