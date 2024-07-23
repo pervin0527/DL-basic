@@ -1,13 +1,13 @@
 debug: false
 data_dir: "/home/pervinco/Datasets/leash-bio"
 save_dir: "./runs"
-ckpt_dir: "./runs/2024-06-17-14-59-13"
+ckpt_dir: "./runs/2024-06-17-18-54-44"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train_split.parquet"
 valid_parquet: "/home/pervinco/Datasets/leash-bio/valid_split.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-num_train_data: 50000 ## 1000000, 1589906, 146828462
+num_train_data: 250000 ## 1000000, 1589906, 146828462
 num_valid_data: 10000
 b1_rate: 0.2
 num_workers: 6

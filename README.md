@@ -1,5 +1,37 @@
 # DL-basic
 
+## Installation
+
+[https://pytorch.kr/get-started/locally/](https://pytorch.kr/get-started/locally/)
+
+    ## 아나콘다 가상환경, 파이토치 설치.
+    conda create --name DL python=3.8
+    conda install pytorch==2.0.1 torchvision==0.15.2 torchtext==0.15.2 torchaudio==2.0.2 pytorch-cuda=11.7 -c pytorch -c nvidia
+
+    conda create --name DL python=3.9
+    conda install pytorch torchvision torchaudio torchtext=0.18.0 pytorch-cuda=11.8 -c pytorch -c nvidia
+
+    conda install pytorch-lightning==2.0.0 hydra-core==1.3.2 -c conda-forge
+    conda install tensorboard tensorboardX
+
+    ## 주피터 노트북 커널
+    conda install pexpect jupyter
+    pip install pexpect jupyter ipykernel
+    pip uninstall pyzmq
+    pip install pyzmq
+
+    ## 라이브러리 설치
+    pip install timm transformers
+
+설치가 정상적으로 되었는지 검사
+
+```python
+import torch
+
+torch.__version__ ## '2.3.1'
+torch.cuda.is_available() ## True
+```
+
 ## Introduction
 
 <img src="./imgs/moto.jpeg" width="" height="512">
